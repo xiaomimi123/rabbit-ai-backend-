@@ -1,0 +1,34 @@
+import { z } from 'zod';
+
+export const AddressSchema = z
+  .string()
+  .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid address');
+
+export const TxHashSchema = z
+  .string()
+  .regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid txHash');
+
+export const UserInfoQuerySchema = z.object({
+  address: AddressSchema,
+});
+
+export const TeamRewardsQuerySchema = z.object({
+  address: AddressSchema,
+});
+
+export const WithdrawHistoryQuerySchema = z.object({
+  address: AddressSchema,
+});
+
+export const VerifyClaimBodySchema = z.object({
+  address: AddressSchema,
+  txHash: TxHashSchema,
+  referrer: AddressSchema.optional().default('0x0000000000000000000000000000000000000000'),
+});
+
+export const ApplyWithdrawBodySchema = z.object({
+  address: AddressSchema,
+  amount: z.string().min(1),
+});
+
+
