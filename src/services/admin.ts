@@ -341,4 +341,47 @@ export async function adminGetUser(provider: ethers.providers.Provider, address:
   };
 }
 
+export async function adminListRecentUsers(limit: number) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('address,referrer_address,invite_count,energy_total,energy_locked,created_at,updated_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return {
+    ok: true,
+    items: (data || []).map((r: any) => ({
+      address: r.address,
+      referrer: r.referrer_address,
+      inviteCount: String(r.invite_count || 0),
+      energyTotal: String(r.energy_total || 0),
+      energyLocked: String(r.energy_locked || 0),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    })),
+  };
+}
+
+export async function adminListRecentClaims(limit: number) {
+  const { data, error } = await supabase
+    .from('claims')
+    .select('tx_hash,address,referrer,amount_wei,block_number,block_time,created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+
+  return {
+    ok: true,
+    items: (data || []).map((r: any) => ({
+      txHash: r.tx_hash,
+      address: r.address,
+      referrer: r.referrer,
+      amount: ethers.utils.formatEther(String(r.amount_wei)),
+      unit: 'RAT',
+      blockNumber: r.block_number,
+      createdAt: r.created_at,
+    })),
+  };
+}
+
 

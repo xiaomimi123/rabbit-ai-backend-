@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ethers } from 'ethers';
 import { assertAdmin } from '../adminAuth.js';
 import {
+  AdminRecentQuerySchema,
   AdminUserQuerySchema,
   AdminWithdrawCompleteBodySchema,
   AdminWithdrawListQuerySchema,
@@ -11,6 +12,8 @@ import { toErrorResponse } from '../errors.js';
 import {
   adminGetSystemConfig,
   adminGetUser,
+  adminListRecentClaims,
+  adminListRecentUsers,
   adminSetSystemConfig,
   completeWithdrawal,
   getAdminKpis,
@@ -107,6 +110,30 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
       return await adminGetUser(deps.getProvider(), parsed.data.address);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  app.get('/api/admin/users/recent', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminRecentQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await adminListRecentUsers(parsed.data.limit);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  app.get('/api/admin/claims/recent', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminRecentQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await adminListRecentClaims(parsed.data.limit);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

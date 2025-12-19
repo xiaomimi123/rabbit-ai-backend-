@@ -48,4 +48,8 @@ export const AdminUserQuerySchema = z.object({
   address: AddressSchema,
 });
 
+export const AdminRecentQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+});
+
 
