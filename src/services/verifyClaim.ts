@@ -14,6 +14,44 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   ]);
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isTransientRpcError(e: any): boolean {
+  const code = e?.error?.code ?? e?.code;
+  const msg = String(e?.error?.message || e?.message || '').toLowerCase();
+  return (
+    code === -32005 ||
+    msg.includes('limit exceeded') ||
+    msg.includes('rate') ||
+    msg.includes('too many') ||
+    msg.includes('timeout') ||
+    msg.includes('network error') ||
+    msg.includes('header not found') ||
+    msg.includes('connection')
+  );
+}
+
+async function retryRpc<T>(fn: () => Promise<T>, opts?: { attempts?: number; baseDelayMs?: number; timeoutMs?: number }) {
+  const attempts = opts?.attempts ?? 5;
+  const baseDelayMs = opts?.baseDelayMs ?? 800;
+  const timeoutMs = opts?.timeoutMs ?? 8000;
+  let lastErr: any = null;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      const res = await withTimeout(fn(), timeoutMs, null as any);
+      if (res === null) throw new Error('RPC_TIMEOUT');
+      return res as T;
+    } catch (e: any) {
+      lastErr = e;
+      if (i >= attempts || !isTransientRpcError(e)) break;
+      await sleep(baseDelayMs * i);
+    }
+  }
+  throw lastErr;
+}
+
 async function ensureUserRow(address: string, referrer: string) {
   const addr = address.toLowerCase();
   const ref = (referrer || '0x0000000000000000000000000000000000000000').toLowerCase();
@@ -66,6 +104,26 @@ async function addEnergyOnSuccessfulClaim(address: string) {
   if (upErr) throw upErr;
 }
 
+async function awardEnergyOnceForTx(address: string, txHash: string) {
+  const addr = address.toLowerCase();
+  const hash = txHash.toLowerCase();
+
+  // Set claims.energy_awarded=true only once; only then increment energy_total.
+  const { data: updated, error: upErr } = await supabase
+    .from('claims')
+    .update({ energy_awarded: true })
+    .eq('tx_hash', hash)
+    .eq('address', addr)
+    .eq('energy_awarded', false)
+    .select('tx_hash')
+    .limit(1);
+  if (upErr) throw upErr;
+  if (!updated || updated.length === 0) return { ok: true, awarded: false };
+
+  await addEnergyOnSuccessfulClaim(addr);
+  return { ok: true, awarded: true };
+}
+
 export async function verifyClaim(params: { provider: ethers.providers.Provider; address: string; txHash: string; referrer: string }) {
   const address = params.address.toLowerCase();
   const txHash = params.txHash;
@@ -75,6 +133,9 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   const { data: existing, error: exErr } = await supabase.from('claims').select('tx_hash,amount_wei,block_number,block_time').eq('tx_hash', txHash).maybeSingle();
   if (exErr) throw exErr;
   if (existing) {
+    // Even if claim exists, still ensure user exists and energy awarded (idempotent).
+    await ensureUserRow(address, params.referrer);
+    await awardEnergyOnceForTx(address, txHash);
     return {
       ok: true,
       txHash,
@@ -86,12 +147,12 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     };
   }
 
-  const tx = await params.provider.getTransaction(txHash);
+  const tx = await retryRpc(() => params.provider.getTransaction(txHash), { attempts: 5, baseDelayMs: 800, timeoutMs: 8000 });
   if (!tx) throw new ApiError('TX_NOT_FOUND', 'Transaction not found', 404);
   if (!tx.to || tx.to.toLowerCase() !== expectedTo) throw new ApiError('INVALID_TX', 'TX_TO_MISMATCH', 400);
   if (!tx.from || tx.from.toLowerCase() !== address) throw new ApiError('INVALID_TX', 'TX_FROM_MISMATCH', 400);
 
-  const receipt = await params.provider.getTransactionReceipt(txHash);
+  const receipt = await retryRpc(() => params.provider.getTransactionReceipt(txHash), { attempts: 8, baseDelayMs: 1200, timeoutMs: 8000 });
   if (!receipt) throw new ApiError('TX_NOT_FOUND', 'Receipt not found', 404);
   if (receipt.status !== 1) throw new ApiError('TX_FAILED', 'Transaction failed', 400);
 
@@ -134,6 +195,7 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
       block_number: receipt.blockNumber,
       block_time: blockTimeIso,
       status: 'SUCCESS',
+      energy_awarded: false,
       created_at: new Date().toISOString(),
     },
     { onConflict: 'tx_hash' }
@@ -142,8 +204,8 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
 
   // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
   await ensureUserRow(address, params.referrer);
-  // 能量累积：每次成功领取空投 +1（用于提现能量约束）
-  await addEnergyOnSuccessfulClaim(address);
+  // 能量累积：每次成功领取空投 +1（幂等，不会重复加也不会漏加）
+  await awardEnergyOnceForTx(address, txHash);
 
   return {
     ok: true,
