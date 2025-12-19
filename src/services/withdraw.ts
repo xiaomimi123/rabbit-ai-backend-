@@ -18,7 +18,12 @@ export async function applyWithdraw(address: string, amountStr: string) {
   const energyLocked = Number((user as any)?.energy_locked || 0);
   const energyAvailable = Math.max(0, energyTotal - energyLocked);
 
-  if (energyAvailable < amount) throw new ApiError('ENERGY_NOT_ENOUGH', 'Energy not enough', 400);
+  // 业务规则：提现需要能量 >= 50，且能量需覆盖提现金额（1 USDT = 1 Energy）
+  const minEnergyToWithdraw = 50;
+  const requiredEnergy = Math.max(minEnergyToWithdraw, amount);
+  if (energyAvailable < requiredEnergy) {
+    throw new ApiError('ENERGY_NOT_ENOUGH', `Energy not enough (need >= ${requiredEnergy})`, 400);
+  }
 
   // basic anti-dup: existing Pending within 5 minutes
   const { data: pending, error: pendErr } = await supabase

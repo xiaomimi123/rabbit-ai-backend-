@@ -20,6 +20,9 @@ export async function getUserInfo(address: string) {
   return {
     address: addr,
     energy,
+    energyTotal,
+    energyLocked,
+    minEnergyToWithdraw: 50,
     inviteCount,
     referrer: (data as any)?.referrer_address || '0x0000000000000000000000000000000000000000',
     updatedAt: (data as any)?.updated_at || new Date().toISOString(),

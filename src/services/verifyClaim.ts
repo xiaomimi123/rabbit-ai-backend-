@@ -35,6 +35,27 @@ async function ensureUserRow(address: string, referrer: string) {
   if (upErr) throw upErr;
 }
 
+async function addEnergyOnSuccessfulClaim(address: string) {
+  const addr = address.toLowerCase();
+  const { data, error } = await supabase
+    .from('users')
+    .select('energy_total,energy_locked,created_at')
+    .eq('address', addr)
+    .maybeSingle();
+  if (error) throw error;
+
+  const createdAt = (data as any)?.created_at || new Date().toISOString();
+  const energyTotal = Number((data as any)?.energy_total || 0);
+  const energyLocked = Number((data as any)?.energy_locked || 0);
+  const nextTotal = energyTotal + 1; // 每成功领取一次空投，能量 +1
+
+  const { error: upErr } = await supabase.from('users').upsert(
+    { address: addr, energy_total: nextTotal, energy_locked: energyLocked, updated_at: new Date().toISOString(), created_at: createdAt },
+    { onConflict: 'address' }
+  );
+  if (upErr) throw upErr;
+}
+
 export async function verifyClaim(params: { provider: ethers.providers.Provider; address: string; txHash: string; referrer: string }) {
   const address = params.address.toLowerCase();
   const txHash = params.txHash;
@@ -110,6 +131,8 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
 
   // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
   await ensureUserRow(address, params.referrer);
+  // 能量累积：每次成功领取空投 +1（用于提现能量约束）
+  await addEnergyOnSuccessfulClaim(address);
 
   return {
     ok: true,
