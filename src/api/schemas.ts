@@ -52,4 +52,14 @@ export const AdminRecentQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
 });
 
+export const AdminAdjustUserEnergyBodySchema = z.object({
+  delta: z.coerce.number().finite().min(-1_000_000_000).max(1_000_000_000),
+  reason: z.string().max(200).optional(),
+});
+
+export const AdminAdjustUserUsdtBodySchema = z.object({
+  delta: z.coerce.number().finite().min(-1_000_000_000).max(1_000_000_000),
+  reason: z.string().max(200).optional(),
+});
+
 

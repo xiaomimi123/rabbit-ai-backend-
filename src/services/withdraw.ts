@@ -6,10 +6,10 @@ export async function applyWithdraw(address: string, amountStr: string) {
   const amount = Number(amountStr);
   if (!Number.isFinite(amount) || amount <= 0) throw new ApiError('INVALID_REQUEST', 'Invalid amount');
 
-  // energy check
+  // load user balances
   const { data: user, error: userErr } = await supabase
     .from('users')
-    .select('energy_total,energy_locked')
+    .select('energy_total,energy_locked,usdt_total,usdt_locked,created_at')
     .eq('address', addr)
     .maybeSingle();
   if (userErr) throw userErr;
@@ -17,6 +17,14 @@ export async function applyWithdraw(address: string, amountStr: string) {
   const energyTotal = Number((user as any)?.energy_total || 0);
   const energyLocked = Number((user as any)?.energy_locked || 0);
   const energyAvailable = Math.max(0, energyTotal - energyLocked);
+
+  const usdtTotal = Number((user as any)?.usdt_total || 0);
+  const usdtLocked = Number((user as any)?.usdt_locked || 0);
+  const usdtAvailable = Math.max(0, usdtTotal - usdtLocked);
+
+  if (usdtAvailable < amount) {
+    throw new ApiError('USDT_NOT_ENOUGH', `USDT not enough (available ${usdtAvailable}, need ${amount})`, 400);
+  }
 
   // 业务规则：提现需要能量 >= 50，且能量需覆盖提现金额（1 USDT = 1 Energy）
   const minEnergyToWithdraw = 50;
@@ -50,12 +58,26 @@ export async function applyWithdraw(address: string, amountStr: string) {
     }
   }
 
-  // lock energy
-  const newLocked = energyLocked + amount;
-  const { error: upErr } = await supabase
+  // lock energy + lock usdt (best-effort consistency: if insert fails, try to rollback locks)
+  const nextEnergyLocked = energyLocked + amount;
+  const nextUsdtLocked = usdtLocked + amount;
+  const createdAt = (user as any)?.created_at || new Date().toISOString();
+
+  const { error: lockErr } = await supabase
     .from('users')
-    .upsert({ address: addr, energy_total: energyTotal, energy_locked: newLocked, updated_at: new Date().toISOString() }, { onConflict: 'address' });
-  if (upErr) throw upErr;
+    .upsert(
+      {
+        address: addr,
+        energy_total: energyTotal,
+        energy_locked: nextEnergyLocked,
+        usdt_total: usdtTotal,
+        usdt_locked: nextUsdtLocked,
+        created_at: createdAt,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'address' }
+    );
+  if (lockErr) throw lockErr;
 
   const { data: inserted, error: insErr } = await supabase
     .from('withdrawals')
@@ -69,7 +91,23 @@ export async function applyWithdraw(address: string, amountStr: string) {
     })
     .select('id,amount,status,created_at')
     .single();
-  if (insErr) throw insErr;
+
+  if (insErr) {
+    // rollback locks (best-effort)
+    await supabase.from('users').upsert(
+      {
+        address: addr,
+        energy_total: energyTotal,
+        energy_locked: energyLocked,
+        usdt_total: usdtTotal,
+        usdt_locked: usdtLocked,
+        created_at: createdAt,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'address' }
+    );
+    throw insErr;
+  }
 
   return {
     ok: true,

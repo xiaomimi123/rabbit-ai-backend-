@@ -125,16 +125,34 @@ export async function listPendingWithdrawals(limit: number) {
 }
 
 async function getUserEnergyRow(address: string) {
-  const { data, error } = await supabase.from('users').select('energy_total,energy_locked,created_at').eq('address', address).maybeSingle();
+  const { data, error } = await supabase
+    .from('users')
+    .select('energy_total,energy_locked,usdt_total,usdt_locked,created_at')
+    .eq('address', address)
+    .maybeSingle();
   if (error) throw error;
   const energyTotal = Number((data as any)?.energy_total || 0);
   const energyLocked = Number((data as any)?.energy_locked || 0);
-  return { energyTotal, energyLocked, createdAt: (data as any)?.created_at || new Date().toISOString() };
+  const usdtTotal = Number((data as any)?.usdt_total || 0);
+  const usdtLocked = Number((data as any)?.usdt_locked || 0);
+  return { energyTotal, energyLocked, usdtTotal, usdtLocked, createdAt: (data as any)?.created_at || new Date().toISOString() };
 }
 
-async function updateUserEnergy(address: string, nextTotal: number, nextLocked: number, createdAt: string) {
+async function updateUserBalances(
+  address: string,
+  next: { energyTotal: number; energyLocked: number; usdtTotal: number; usdtLocked: number },
+  createdAt: string
+) {
   const { error } = await supabase.from('users').upsert(
-    { address, energy_total: nextTotal, energy_locked: nextLocked, updated_at: new Date().toISOString(), created_at: createdAt },
+    {
+      address,
+      energy_total: next.energyTotal,
+      energy_locked: next.energyLocked,
+      usdt_total: next.usdtTotal,
+      usdt_locked: next.usdtLocked,
+      updated_at: new Date().toISOString(),
+      created_at: createdAt,
+    },
     { onConflict: 'address' }
   );
   if (error) throw error;
@@ -156,10 +174,15 @@ export async function rejectWithdrawal(withdrawalId: string) {
   const addr = lower((w as any).address);
   const amount = Number((w as any).amount || 0);
 
-  // unlock energy (do not reduce total)
+  // unlock energy + unlock usdt (do not reduce totals)
   const u = await getUserEnergyRow(addr);
-  const nextLocked = Math.max(0, u.energyLocked - amount);
-  await updateUserEnergy(addr, u.energyTotal, nextLocked, u.createdAt);
+  const nextEnergyLocked = Math.max(0, u.energyLocked - amount);
+  const nextUsdtLocked = Math.max(0, u.usdtLocked - amount);
+  await updateUserBalances(
+    addr,
+    { energyTotal: u.energyTotal, energyLocked: nextEnergyLocked, usdtTotal: u.usdtTotal, usdtLocked: nextUsdtLocked },
+    u.createdAt
+  );
 
   const { error: upErr } = await supabase
     .from('withdrawals')
@@ -245,12 +268,20 @@ export async function completeWithdrawal(params: {
   }
   if (!matched) throw new ApiError('INVALID_PAYOUT', 'USDT Transfer not matched (from/to/value)', 400);
 
-  // Update DB: withdrawal completed + adjust energy
+  // Update DB: withdrawal completed + adjust energy + adjust usdt
   const u = await getUserEnergyRow(userAddr);
   const amtNum = Number(amount);
-  const nextLocked = Math.max(0, u.energyLocked - amtNum);
-  const nextTotal = Math.max(0, u.energyTotal - amtNum);
-  await updateUserEnergy(userAddr, nextTotal, nextLocked, u.createdAt);
+
+  const nextEnergyLocked = Math.max(0, u.energyLocked - amtNum);
+  const nextEnergyTotal = Math.max(0, u.energyTotal - amtNum);
+  const nextUsdtLocked = Math.max(0, u.usdtLocked - amtNum);
+  const nextUsdtTotal = Math.max(0, u.usdtTotal - amtNum);
+
+  await updateUserBalances(
+    userAddr,
+    { energyTotal: nextEnergyTotal, energyLocked: nextEnergyLocked, usdtTotal: nextUsdtTotal, usdtLocked: nextUsdtLocked },
+    u.createdAt
+  );
 
   const { error: upErr } = await supabase
     .from('withdrawals')
@@ -266,7 +297,7 @@ export async function adminGetUser(provider: ethers.providers.Provider, address:
 
   const { data: user, error: uErr } = await supabase
     .from('users')
-    .select('address,referrer_address,invite_count,energy_total,energy_locked,created_at,updated_at')
+    .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,created_at,updated_at')
     .eq('address', addr)
     .maybeSingle();
   if (uErr) throw uErr;
@@ -313,6 +344,8 @@ export async function adminGetUser(provider: ethers.providers.Provider, address:
           inviteCount: String((user as any).invite_count || 0),
           energyTotal: String((user as any).energy_total || 0),
           energyLocked: String((user as any).energy_locked || 0),
+          usdtTotal: String((user as any).usdt_total || 0),
+          usdtLocked: String((user as any).usdt_locked || 0),
           createdAt: (user as any).created_at,
           updatedAt: (user as any).updated_at,
         }
@@ -344,7 +377,7 @@ export async function adminGetUser(provider: ethers.providers.Provider, address:
 export async function adminListRecentUsers(limit: number) {
   const { data, error } = await supabase
     .from('users')
-    .select('address,referrer_address,invite_count,energy_total,energy_locked,created_at,updated_at')
+    .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,created_at,updated_at')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -356,6 +389,8 @@ export async function adminListRecentUsers(limit: number) {
       inviteCount: String(r.invite_count || 0),
       energyTotal: String(r.energy_total || 0),
       energyLocked: String(r.energy_locked || 0),
+      usdtTotal: String(r.usdt_total || 0),
+      usdtLocked: String(r.usdt_locked || 0),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     })),
@@ -381,6 +416,54 @@ export async function adminListRecentClaims(limit: number) {
       blockNumber: r.block_number,
       createdAt: r.created_at,
     })),
+  };
+}
+
+export async function adminAdjustUserEnergy(address: string, delta: number) {
+  const addr = lower(address);
+  if (!Number.isFinite(delta)) throw new ApiError('INVALID_REQUEST', 'Invalid delta', 400);
+
+  const u = await getUserEnergyRow(addr);
+  const nextTotal = Math.max(0, u.energyTotal + delta);
+  if (nextTotal < u.energyLocked) {
+    throw new ApiError('INVALID_STATE', 'energy_total cannot be less than energy_locked', 400);
+  }
+
+  await updateUserBalances(
+    addr,
+    { energyTotal: nextTotal, energyLocked: u.energyLocked, usdtTotal: u.usdtTotal, usdtLocked: u.usdtLocked },
+    u.createdAt
+  );
+
+  return {
+    ok: true,
+    address: addr,
+    energyTotal: String(nextTotal),
+    energyLocked: String(u.energyLocked),
+  };
+}
+
+export async function adminAdjustUserUsdt(address: string, delta: number) {
+  const addr = lower(address);
+  if (!Number.isFinite(delta)) throw new ApiError('INVALID_REQUEST', 'Invalid delta', 400);
+
+  const u = await getUserEnergyRow(addr);
+  const nextTotal = Math.max(0, u.usdtTotal + delta);
+  if (nextTotal < u.usdtLocked) {
+    throw new ApiError('INVALID_STATE', 'usdt_total cannot be less than usdt_locked', 400);
+  }
+
+  await updateUserBalances(
+    addr,
+    { energyTotal: u.energyTotal, energyLocked: u.energyLocked, usdtTotal: nextTotal, usdtLocked: u.usdtLocked },
+    u.createdAt
+  );
+
+  return {
+    ok: true,
+    address: addr,
+    usdtTotal: String(nextTotal),
+    usdtLocked: String(u.usdtLocked),
   };
 }
 

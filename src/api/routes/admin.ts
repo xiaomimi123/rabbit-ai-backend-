@@ -3,6 +3,9 @@ import type { ethers } from 'ethers';
 import { assertAdmin } from '../adminAuth.js';
 import {
   AdminRecentQuerySchema,
+  AddressSchema,
+  AdminAdjustUserEnergyBodySchema,
+  AdminAdjustUserUsdtBodySchema,
   AdminUserQuerySchema,
   AdminWithdrawCompleteBodySchema,
   AdminWithdrawListQuerySchema,
@@ -11,6 +14,8 @@ import {
 import { toErrorResponse } from '../errors.js';
 import {
   adminGetSystemConfig,
+  adminAdjustUserEnergy,
+  adminAdjustUserUsdt,
   adminGetUser,
   adminListRecentClaims,
   adminListRecentUsers,
@@ -110,6 +115,38 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
       return await adminGetUser(deps.getProvider(), parsed.data.address);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  app.post('/api/admin/users/:address/energy', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const addrParsed = AddressSchema.safeParse(String((req.params as any)?.address || '').toLowerCase());
+    if (!addrParsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: addrParsed.error.message });
+
+    const body = AdminAdjustUserEnergyBodySchema.safeParse(req.body || {});
+    if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
+
+    try {
+      return await adminAdjustUserEnergy(addrParsed.data, body.data.delta);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  app.post('/api/admin/users/:address/usdt', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const addrParsed = AddressSchema.safeParse(String((req.params as any)?.address || '').toLowerCase());
+    if (!addrParsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: addrParsed.error.message });
+
+    const body = AdminAdjustUserUsdtBodySchema.safeParse(req.body || {});
+    if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
+
+    try {
+      return await adminAdjustUserUsdt(addrParsed.data, body.data.delta);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

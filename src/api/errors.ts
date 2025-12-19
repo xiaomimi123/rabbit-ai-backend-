@@ -6,6 +6,7 @@ export type ApiErrorCode =
   | 'TX_FAILED'
   | 'RATE_LIMITED'
   | 'ENERGY_NOT_ENOUGH'
+  | 'USDT_NOT_ENOUGH'
   | 'NOT_FOUND'
   | 'CONFIG_ERROR'
   | 'INVALID_STATE'

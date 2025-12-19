@@ -6,7 +6,7 @@ export async function getUserInfo(address: string) {
 
   const { data, error } = await supabase
     .from('users')
-    .select('address,invite_count,referrer_address,energy_total,energy_locked,updated_at')
+    .select('address,invite_count,referrer_address,energy_total,energy_locked,usdt_total,usdt_locked,updated_at')
     .eq('address', addr)
     .maybeSingle();
 
@@ -17,12 +17,19 @@ export async function getUserInfo(address: string) {
   const energyLocked = Number((data as any)?.energy_locked || 0);
   const energy = Math.max(0, energyTotal - energyLocked);
 
+  const usdtTotal = Number((data as any)?.usdt_total || 0);
+  const usdtLocked = Number((data as any)?.usdt_locked || 0);
+  const usdtAvailable = Math.max(0, usdtTotal - usdtLocked);
+
   return {
     address: addr,
     energy,
     energyTotal,
     energyLocked,
     minEnergyToWithdraw: 50,
+    usdtAvailable,
+    usdtTotal,
+    usdtLocked,
     inviteCount,
     referrer: (data as any)?.referrer_address || '0x0000000000000000000000000000000000000000',
     updatedAt: (data as any)?.updated_at || new Date().toISOString(),
