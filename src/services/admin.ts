@@ -330,10 +330,26 @@ export async function adminGetUser(provider: ethers.providers.Provider, address:
 
   // airdrop contract snapshot
   const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
-  const [lastClaimTime, inviteCountOnchain] = await Promise.all([
-    airdrop.lastClaimTime(addr).catch(() => 0),
-    airdrop.inviteCount(addr).catch(() => 0),
-  ]);
+
+  // Some deployments/ABIs may not expose lastClaimTime (or inviteCount). Guard against "is not a function".
+  const airdropAny = airdrop as any;
+  const lastClaimTime = await (async () => {
+    try {
+      if (typeof airdropAny.lastClaimTime !== 'function') return 0;
+      return await airdropAny.lastClaimTime(addr);
+    } catch {
+      return 0;
+    }
+  })();
+
+  const inviteCountOnchain = await (async () => {
+    try {
+      if (typeof airdropAny.inviteCount !== 'function') return 0;
+      return await airdropAny.inviteCount(addr);
+    } catch {
+      return 0;
+    }
+  })();
 
   return {
     ok: true,
