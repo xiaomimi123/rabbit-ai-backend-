@@ -12,16 +12,9 @@ export function createServer(deps: { getProvider: () => ethers.providers.Provide
   const app = Fastify({ logger: true });
 
   // CORS for Admin Panel / Web frontends
-  app.register(cors, {
-    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
-      const allow = config.corsOrigins || '*';
-      if (allow === '*') return cb(null, true);
-      const list = allow.split(',').map((s) => s.trim()).filter(Boolean);
-      if (!origin) return cb(null, true);
-      if (list.includes(origin)) return cb(null, true);
-      return cb(null, false);
-    },
-  });
+  const allow = config.corsOrigins || '*';
+  const origin = allow === '*' ? true : allow.split(',').map((s) => s.trim()).filter(Boolean);
+  app.register(cors, { origin });
 
   registerHealthRoutes(app);
   registerUserRoutes(app);
