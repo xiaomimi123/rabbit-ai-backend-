@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { supabase } from '../infra/supabase';
+import { supabase } from '../infra/supabase.js';
 
 export async function getUserInfo(address: string) {
   const addr = address.toLowerCase();

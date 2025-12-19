@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { TeamRewardsQuerySchema, UserInfoQuerySchema } from '../schemas';
-import { getTeamRewards, getUserInfo } from '../../services/user';
+import { TeamRewardsQuerySchema, UserInfoQuerySchema } from '../schemas.js';
+import { getTeamRewards, getUserInfo } from '../../services/user.js';
 
 export function registerUserRoutes(app: FastifyInstance) {
   app.get('/api/user/info', async (req: FastifyRequest, reply: FastifyReply) => {

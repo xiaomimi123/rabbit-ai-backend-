@@ -1,8 +1,8 @@
 import { ethers } from 'ethers';
-import { AIRDROP_ABI } from '../infra/abis';
-import { config } from '../config';
-import { supabase } from '../infra/supabase';
-import { ApiError } from '../api/errors';
+import { AIRDROP_ABI } from '../infra/abis.js';
+import { config } from '../config.js';
+import { supabase } from '../infra/supabase.js';
+import { ApiError } from '../api/errors.js';
 
 export async function verifyClaim(params: { provider: ethers.providers.Provider; address: string; txHash: string; referrer: string }) {
   const address = params.address.toLowerCase();

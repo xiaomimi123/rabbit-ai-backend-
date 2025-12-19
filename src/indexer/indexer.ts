@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
-import { AIRDROP_ABI } from '../infra/abis';
-import { supabase } from '../infra/supabase';
-import { config } from '../config';
+import { AIRDROP_ABI } from '../infra/abis.js';
+import { supabase } from '../infra/supabase.js';
+import { config } from '../config.js';
 
 type ChainSyncStateRow = {
   id: string;

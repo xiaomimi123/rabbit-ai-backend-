@@ -1,8 +1,8 @@
 import Fastify from 'fastify';
-import { registerHealthRoutes } from './api/routes/health';
-import { registerUserRoutes } from './api/routes/user';
-import { registerMiningRoutes } from './api/routes/mining';
-import { registerAssetRoutes } from './api/routes/asset';
+import { registerHealthRoutes } from './api/routes/health.js';
+import { registerUserRoutes } from './api/routes/user.js';
+import { registerMiningRoutes } from './api/routes/mining.js';
+import { registerAssetRoutes } from './api/routes/asset.js';
 import type { ethers } from 'ethers';
 
 export function createServer(deps: { getProvider: () => ethers.providers.Provider }) {

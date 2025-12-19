@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { ApplyWithdrawBodySchema, WithdrawHistoryQuerySchema } from '../schemas';
-import { applyWithdraw, getWithdrawHistory } from '../../services/withdraw';
-import { toErrorResponse } from '../errors';
+import { ApplyWithdrawBodySchema, WithdrawHistoryQuerySchema } from '../schemas.js';
+import { applyWithdraw, getWithdrawHistory } from '../../services/withdraw.js';
+import { toErrorResponse } from '../errors.js';
 
 export function registerAssetRoutes(app: FastifyInstance) {
   app.post('/api/asset/withdraw/apply', async (req: FastifyRequest, reply: FastifyReply) => {

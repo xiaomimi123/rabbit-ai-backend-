@@ -1,5 +1,5 @@
-import { supabase } from '../infra/supabase';
-import { ApiError } from '../api/errors';
+import { supabase } from '../infra/supabase.js';
+import { ApiError } from '../api/errors.js';
 
 export async function applyWithdraw(address: string, amountStr: string) {
   const addr = address.toLowerCase();

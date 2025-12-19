@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { VerifyClaimBodySchema } from '../schemas';
-import { toErrorResponse } from '../errors';
-import { verifyClaim } from '../../services/verifyClaim';
+import { VerifyClaimBodySchema } from '../schemas.js';
+import { toErrorResponse } from '../errors.js';
+import { verifyClaim } from '../../services/verifyClaim.js';
 import type { ethers } from 'ethers';
 
 export function registerMiningRoutes(app: FastifyInstance, deps: { getProvider: () => ethers.providers.Provider }) {

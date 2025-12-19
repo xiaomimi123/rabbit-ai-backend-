@@ -1,8 +1,8 @@
 import { ethers } from 'ethers';
-import { config } from './config';
-import { createServer } from './server';
-import { RpcPool } from './infra/rpcPool';
-import { startIndexer } from './indexer/indexer';
+import { config } from './config.js';
+import { createServer } from './server.js';
+import { RpcPool } from './infra/rpcPool.js';
+import { startIndexer } from './indexer/indexer.js';
 
 async function main() {
   const rpcPool = new RpcPool(config.rpcUrls);
