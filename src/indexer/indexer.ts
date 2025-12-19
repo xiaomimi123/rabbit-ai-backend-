@@ -16,6 +16,36 @@ function lower(addr: string | null | undefined): string {
   return (addr || '').toLowerCase();
 }
 
+async function ensureUserRow(address: string, referrer: string | null | undefined): Promise<void> {
+  const addr = lower(address);
+  const ref = lower(referrer || '0x0000000000000000000000000000000000000000');
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('referrer_address,invite_count,energy_total,energy_locked,created_at')
+    .eq('address', addr)
+    .maybeSingle();
+  if (error) throw error;
+
+  const createdAt = (data as any)?.created_at || new Date().toISOString();
+  const existingRef = lower((data as any)?.referrer_address || '');
+  const nextRef = existingRef || (ref !== '0x0000000000000000000000000000000000000000' ? ref : null);
+
+  const { error: upErr } = await supabase.from('users').upsert(
+    {
+      address: addr,
+      referrer_address: nextRef,
+      invite_count: Number((data as any)?.invite_count || 0),
+      energy_total: Number((data as any)?.energy_total || 0),
+      energy_locked: Number((data as any)?.energy_locked || 0),
+      updated_at: new Date().toISOString(),
+      created_at: createdAt,
+    },
+    { onConflict: 'address' }
+  );
+  if (upErr) throw upErr;
+}
+
 function isLimitExceededError(err: any): boolean {
   const code = err?.error?.code ?? err?.code;
   const msg = String(err?.error?.message || err?.message || '').toLowerCase();
@@ -92,6 +122,9 @@ async function insertClaim(args: {
     { onConflict: 'tx_hash' }
   );
   if (error) throw error;
+
+  // ensure user exists (Admin Panel user count)
+  await ensureUserRow(args.address, args.referrer);
 }
 
 async function insertReferralReward(args: {

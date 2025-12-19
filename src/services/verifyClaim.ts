@@ -4,6 +4,37 @@ import { config } from '../config.js';
 import { supabase } from '../infra/supabase.js';
 import { ApiError } from '../api/errors.js';
 
+async function ensureUserRow(address: string, referrer: string) {
+  const addr = address.toLowerCase();
+  const ref = (referrer || '0x0000000000000000000000000000000000000000').toLowerCase();
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('address,referrer_address,invite_count,energy_total,energy_locked,created_at')
+    .eq('address', addr)
+    .maybeSingle();
+  if (error) throw error;
+
+  const createdAt = (data as any)?.created_at || new Date().toISOString();
+  const existingRef = String((data as any)?.referrer_address || '').toLowerCase();
+  const nextRef = existingRef || (ref !== '0x0000000000000000000000000000000000000000' ? ref : null);
+
+  // Upsert is idempotent; only fills referrer_address if empty.
+  const { error: upErr } = await supabase.from('users').upsert(
+    {
+      address: addr,
+      referrer_address: nextRef,
+      invite_count: Number((data as any)?.invite_count || 0),
+      energy_total: Number((data as any)?.energy_total || 0),
+      energy_locked: Number((data as any)?.energy_locked || 0),
+      created_at: createdAt,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'address' }
+  );
+  if (upErr) throw upErr;
+}
+
 export async function verifyClaim(params: { provider: ethers.providers.Provider; address: string; txHash: string; referrer: string }) {
   const address = params.address.toLowerCase();
   const txHash = params.txHash;
@@ -76,6 +107,9 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     { onConflict: 'tx_hash' }
   );
   if (insErr) throw insErr;
+
+  // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
+  await ensureUserRow(address, params.referrer);
 
   return {
     ok: true,
