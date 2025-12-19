@@ -63,6 +63,8 @@ create table if not exists public.withdrawals (
 
 create index if not exists idx_withdrawals_address_time on public.withdrawals(address, created_at desc);
 create index if not exists idx_withdrawals_status_time on public.withdrawals(status, created_at desc);
+-- Prevent payout tx replay (a tx hash can only be used once)
+create unique index if not exists uq_withdrawals_payout_tx_hash_not_null on public.withdrawals(payout_tx_hash) where payout_tx_hash is not null;
 
 create table if not exists public.chain_sync_state (
   id text primary key,

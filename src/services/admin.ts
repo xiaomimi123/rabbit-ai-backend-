@@ -202,6 +202,17 @@ export async function completeWithdrawal(params: {
   }
   if (status !== 'Pending') throw new ApiError('INVALID_STATE', `Withdrawal status is ${status}`, 400);
 
+  // Anti-replay: the same payoutTxHash must be used at most once (prevents reusing a single transfer to close multiple requests).
+  const { data: used, error: usedErr } = await supabase
+    .from('withdrawals')
+    .select('id,status')
+    .eq('payout_tx_hash', params.payoutTxHash)
+    .limit(1);
+  if (usedErr) throw usedErr;
+  if (used && used.length > 0 && String((used[0] as any).id) !== String((w as any).id)) {
+    throw new ApiError('INVALID_PAYOUT', 'PAYOUT_TX_ALREADY_USED', 400);
+  }
+
   const userAddr = lower((w as any).address);
   const amount = String((w as any).amount);
 
