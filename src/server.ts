@@ -5,6 +5,7 @@ import { registerUserRoutes } from './api/routes/user.js';
 import { registerMiningRoutes } from './api/routes/mining.js';
 import { registerAssetRoutes } from './api/routes/asset.js';
 import { registerAdminRoutes } from './api/routes/admin.js';
+import { registerDebugRoutes } from './api/routes/debug.js';
 import type { ethers } from 'ethers';
 import { config } from './config.js';
 
@@ -21,6 +22,7 @@ export function createServer(deps: { getProvider: () => ethers.providers.Provide
   registerAssetRoutes(app);
   registerMiningRoutes(app, deps);
   registerAdminRoutes(app, deps);
+  registerDebugRoutes(app);
 
   return app;
 }
