@@ -6,6 +6,12 @@ export type ApiErrorCode =
   | 'TX_FAILED'
   | 'RATE_LIMITED'
   | 'ENERGY_NOT_ENOUGH'
+  | 'NOT_FOUND'
+  | 'CONFIG_ERROR'
+  | 'INVALID_STATE'
+  | 'INVALID_PAYOUT'
+  | 'UNAUTHORIZED'
+  | 'ADMIN_DISABLED'
   | 'INTERNAL_ERROR';
 
 export class ApiError extends Error {

@@ -158,26 +158,43 @@ async function runOnce(provider: ethers.providers.Provider): Promise<void> {
   if (fromBlock > safeHead) return;
 
   const iface = new ethers.utils.Interface(AIRDROP_ABI);
+  // Filter by event topics to reduce RPC load/response size (important for public BSC RPC limits)
+  const eventTopics = [
+    iface.getEventTopic('Claimed'),
+    iface.getEventTopic('ReferralReward'),
+    iface.getEventTopic('CooldownReset'),
+  ];
 
   // Fetch logs with adaptive range split on RPC limits (-32005)
   let span = Math.min(config.batchBlocks, safeHead - fromBlock + 1);
   let attempt = 0;
+  let backoffMs = 2_000;
   let logs: ethers.providers.Log[] = [];
   let toBlock = fromBlock + span - 1;
 
-  while (true) {
+  // Cap retries inside a single runOnce to avoid hammering public RPC.
+  while (attempt < 8) {
     toBlock = Math.min(safeHead, fromBlock + span - 1);
     try {
-      logs = await provider.getLogs({ address: config.airdropContract, fromBlock, toBlock });
+      logs = await provider.getLogs({
+        address: config.airdropContract,
+        fromBlock,
+        toBlock,
+        topics: [eventTopics],
+      });
       break;
     } catch (e: any) {
       attempt += 1;
 
-      if (isLimitExceededError(e) && span > 50) {
-        // reduce range and retry
-        span = Math.max(50, Math.floor(span / 2));
-        console.warn(`[indexer] getLogs limit exceeded, reduce span and retry`, { attempt, span, fromBlock, toBlock });
-        await sleep(500 * attempt);
+      if (isLimitExceededError(e)) {
+        // Two common causes:
+        // 1) Too many logs in one query => reduce span
+        // 2) RPC rate-limit window => exponential backoff
+        const prevSpan = span;
+        span = Math.max(1, Math.floor(span / 2));
+        console.warn(`[indexer] getLogs limit exceeded, reduce span and retry`, { attempt, span, prevSpan, fromBlock, toBlock, backoffMs });
+        await sleep(backoffMs);
+        backoffMs = Math.min(backoffMs * 2, 60_000);
         continue;
       }
 
@@ -186,6 +203,13 @@ async function runOnce(provider: ethers.providers.Provider): Promise<void> {
       await sleep(1000 * Math.min(attempt, 10));
       throw e;
     }
+  }
+
+  // Still rate-limited after retries: cool down and let the next loop try again (avoid spamming rotate/logs)
+  if (attempt >= 8 && logs.length === 0) {
+    console.warn(`[indexer] getLogs still limited after retries, cool down`, { fromBlock, span });
+    await sleep(60_000);
+    return;
   }
 
   const blockTimeCache = new Map<number, string | null>();

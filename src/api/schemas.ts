@@ -31,4 +31,21 @@ export const ApplyWithdrawBodySchema = z.object({
   amount: z.string().min(1),
 });
 
+// Admin
+export const AdminWithdrawCompleteBodySchema = z.object({
+  payoutTxHash: TxHashSchema,
+});
+
+export const AdminWithdrawRejectBodySchema = z.object({
+  reason: z.string().max(200).optional(),
+});
+
+export const AdminWithdrawListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+});
+
+export const AdminUserQuerySchema = z.object({
+  address: AddressSchema,
+});
+
 

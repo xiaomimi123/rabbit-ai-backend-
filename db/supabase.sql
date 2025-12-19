@@ -70,6 +70,13 @@ create table if not exists public.chain_sync_state (
   updated_at timestamptz not null default now()
 );
 
+-- Simple key-value config store for Admin Panel (optional)
+create table if not exists public.system_config (
+  key text primary key,
+  value jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 -- RLS (recommended even if service role bypasses it)
 alter table public.users enable row level security;
 alter table public.claims enable row level security;
@@ -77,5 +84,6 @@ alter table public.referral_rewards enable row level security;
 alter table public.cooldown_resets enable row level security;
 alter table public.withdrawals enable row level security;
 alter table public.chain_sync_state enable row level security;
+alter table public.system_config enable row level security;
 
 

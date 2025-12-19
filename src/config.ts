@@ -12,6 +12,11 @@ function optionalInt(name: string, fallback: number): number {
   return Math.floor(n);
 }
 
+function optionalStr(name: string, fallback = ''): string {
+  const v = process.env[name];
+  return (v ?? fallback).trim();
+}
+
 export const config = {
   port: Number(process.env.PORT || 8080),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -31,8 +36,17 @@ export const config = {
   pollIntervalMs: optionalInt('POLL_INTERVAL_MS', 5000),
   chainSyncId: process.env.CHAIN_SYNC_ID || 'bsc_airdrop',
 
-  jwtSecret: process.env.JWT_SECRET || '',
-  adminApiKey: process.env.ADMIN_API_KEY || '',
+  // Optional: for Admin Panel / finance ops / KPIs
+  ratTokenContract: optionalStr('RAT_TOKEN_CONTRACT').toLowerCase(),
+  stakingContract: optionalStr('STAKING_CONTRACT').toLowerCase(),
+  usdtContract: optionalStr('USDT_CONTRACT').toLowerCase(),
+  adminPayoutAddress: optionalStr('ADMIN_PAYOUT_ADDRESS').toLowerCase(),
+  withdrawAlertThreshold: Number(process.env.WITHDRAW_ALERT_THRESHOLD || 1000),
+
+  corsOrigins: optionalStr('CORS_ORIGINS', '*'),
+
+  jwtSecret: optionalStr('JWT_SECRET'),
+  adminApiKey: optionalStr('ADMIN_API_KEY'),
 };
 
 if (config.rpcUrls.length === 0) {
