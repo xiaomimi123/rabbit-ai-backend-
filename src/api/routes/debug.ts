@@ -11,6 +11,12 @@ export function registerDebugRoutes(app: FastifyInstance) {
       rpcUrlsCount: config.rpcUrls.length,
       chainSyncId: config.chainSyncId,
       nodeEnv: config.nodeEnv,
+      // Render/Vercel 等平台通常会注入 commit 环境变量（若为空说明平台未注入，但不影响功能）
+      gitCommit:
+        process.env.RENDER_GIT_COMMIT ||
+        process.env.COMMIT_REF ||
+        process.env.VERCEL_GIT_COMMIT_SHA ||
+        '',
     };
   });
 
