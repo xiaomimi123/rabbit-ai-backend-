@@ -79,9 +79,13 @@ async function setLastBlockInDb(lastBlock: number): Promise<void> {
 
 async function getBlockTimeIso(provider: ethers.providers.Provider, blockNumber: number): Promise<string | null> {
   try {
-    const block = await provider.getBlock(blockNumber);
-    if (!block?.timestamp) return null;
-    return new Date(block.timestamp * 1000).toISOString();
+    // Avoid blocking indexer on slow RPCs for block timestamp
+    const block = await Promise.race([
+      provider.getBlock(blockNumber),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+    ]);
+    if (!(block as any)?.timestamp) return null;
+    return new Date(Number((block as any).timestamp) * 1000).toISOString();
   } catch {
     return null;
   }

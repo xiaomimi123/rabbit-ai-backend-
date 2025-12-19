@@ -4,6 +4,16 @@ import { config } from '../config.js';
 import { supabase } from '../infra/supabase.js';
 import { ApiError } from '../api/errors.js';
 
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let t: any;
+  return Promise.race([
+    p.finally(() => clearTimeout(t)),
+    new Promise<T>((resolve) => {
+      t = setTimeout(() => resolve(fallback), ms);
+    }),
+  ]);
+}
+
 async function ensureUserRow(address: string, referrer: string) {
   const addr = address.toLowerCase();
   const ref = (referrer || '0x0000000000000000000000000000000000000000').toLowerCase();
@@ -107,8 +117,9 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   // block time (best effort)
   let blockTimeIso: string | null = null;
   try {
-    const block = await params.provider.getBlock(receipt.blockNumber);
-    blockTimeIso = block?.timestamp ? new Date(block.timestamp * 1000).toISOString() : null;
+    // Some RPCs can be slow here; don't block the whole claim sync just for a timestamp.
+    const block = await withTimeout(params.provider.getBlock(receipt.blockNumber), 1500, null as any);
+    blockTimeIso = (block as any)?.timestamp ? new Date(Number((block as any).timestamp) * 1000).toISOString() : null;
   } catch {
     blockTimeIso = null;
   }
