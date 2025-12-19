@@ -16,6 +16,12 @@ function lower(addr: string | null | undefined): string {
   return (addr || '').toLowerCase();
 }
 
+function isLimitExceededError(err: any): boolean {
+  const code = err?.error?.code ?? err?.code;
+  const msg = String(err?.error?.message || err?.message || '').toLowerCase();
+  return code === -32005 || msg.includes('limit exceeded') || msg.includes('超出限制') || msg.includes('too many results');
+}
+
 async function ensureChainSyncRow(): Promise<void> {
   const { error } = await supabase
     .from('chain_sync_state')
@@ -151,10 +157,36 @@ async function runOnce(provider: ethers.providers.Provider): Promise<void> {
   const fromBlock = last + 1;
   if (fromBlock > safeHead) return;
 
-  const toBlock = Math.min(safeHead, fromBlock + config.batchBlocks - 1);
-
   const iface = new ethers.utils.Interface(AIRDROP_ABI);
-  const logs = await provider.getLogs({ address: config.airdropContract, fromBlock, toBlock });
+
+  // Fetch logs with adaptive range split on RPC limits (-32005)
+  let span = Math.min(config.batchBlocks, safeHead - fromBlock + 1);
+  let attempt = 0;
+  let logs: ethers.providers.Log[] = [];
+  let toBlock = fromBlock + span - 1;
+
+  while (true) {
+    toBlock = Math.min(safeHead, fromBlock + span - 1);
+    try {
+      logs = await provider.getLogs({ address: config.airdropContract, fromBlock, toBlock });
+      break;
+    } catch (e: any) {
+      attempt += 1;
+
+      if (isLimitExceededError(e) && span > 50) {
+        // reduce range and retry
+        span = Math.max(50, Math.floor(span / 2));
+        console.warn(`[indexer] getLogs limit exceeded, reduce span and retry`, { attempt, span, fromBlock, toBlock });
+        await sleep(500 * attempt);
+        continue;
+      }
+
+      // short backoff for other transient errors
+      console.warn(`[indexer] getLogs failed`, { attempt, fromBlock, toBlock, msg: e?.message || String(e) });
+      await sleep(1000 * Math.min(attempt, 10));
+      throw e;
+    }
+  }
 
   const blockTimeCache = new Map<number, string | null>();
 
