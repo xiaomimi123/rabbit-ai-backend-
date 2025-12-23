@@ -17,8 +17,18 @@ function optionalStr(name: string, fallback = ''): string {
   return (v ?? fallback).trim();
 }
 
+function getPort(): number {
+  const portStr = process.env.PORT;
+  if (!portStr) return 8080;
+  const port = Number.parseInt(portStr, 10);
+  if (!Number.isFinite(port) || port <= 0 || port >= 65536) {
+    throw new Error(`Invalid PORT environment variable: ${portStr}`);
+  }
+  return port;
+}
+
 export const config = {
-  port: Number(process.env.PORT || 8080),
+  port: getPort(),
   nodeEnv: process.env.NODE_ENV || 'development',
 
   supabaseUrl: required('SUPABASE_URL'),
