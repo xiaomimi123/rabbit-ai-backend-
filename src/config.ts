@@ -19,10 +19,16 @@ function optionalStr(name: string, fallback = ''): string {
 
 function getPort(): number {
   const portStr = process.env.PORT;
-  if (!portStr) return 8080;
-  const port = Number.parseInt(portStr, 10);
+  if (!portStr || !portStr.trim()) {
+    // Render will auto-inject PORT, but if missing, use default
+    return 8080;
+  }
+  const port = Number.parseInt(portStr.trim(), 10);
+  // If PORT is not a valid number, fallback to default (Render will override anyway)
   if (!Number.isFinite(port) || port <= 0 || port >= 65536) {
-    throw new Error(`Invalid PORT environment variable: ${portStr}`);
+    // Log warning but don't crash - Render will inject correct PORT at runtime
+    console.warn(`[WARN] Invalid PORT environment variable "${portStr}", using default 8080. Render will override this.`);
+    return 8080;
   }
   return port;
 }
