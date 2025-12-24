@@ -120,20 +120,35 @@ export async function applyWithdraw(address: string, amountStr: string) {
 
 export async function getWithdrawHistory(address: string) {
   const addr = address.toLowerCase();
-  const { data, error } = await supabase
-    .from('withdrawals')
-    .select('id,amount,status,created_at')
-    .eq('address', addr)
-    .order('created_at', { ascending: false })
-    .limit(50);
-  if (error) throw error;
+  
+  try {
+    const { data, error } = await supabase
+      .from('withdrawals')
+      .select('id,amount,status,created_at')
+      .eq('address', addr)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (error) {
+      console.error('Error fetching withdraw history:', error);
+      return [];
+    }
 
-  return (data || []).map((r: any) => ({
-    id: r.id,
-    amount: String(r.amount),
-    status: r.status,
-    time: new Date(r.created_at).toISOString().slice(0, 19).replace('T', ' '),
-  }));
+    if (!data || data.length === 0) {
+      return [];
+    }
+
+    return data.map((r: any) => ({
+      id: r.id,
+      amount: String(r.amount),
+      status: r.status || 'Pending',
+      time: new Date(r.created_at).toISOString().slice(0, 19).replace('T', ' '),
+      createdAt: r.created_at,
+    }));
+  } catch (error: any) {
+    console.error('Error in getWithdrawHistory:', error);
+    return [];
+  }
 }
 
 
