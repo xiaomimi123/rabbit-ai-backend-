@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { ethers } from 'ethers';
+import { ethers } from 'ethers';
 import { ApplyWithdrawBodySchema, WithdrawHistoryQuerySchema, UserInfoQuerySchema } from '../schemas.js';
 import { applyWithdraw, getWithdrawHistory } from '../../services/withdraw.js';
 import { calculateUserEarnings } from '../../services/earnings.js';
