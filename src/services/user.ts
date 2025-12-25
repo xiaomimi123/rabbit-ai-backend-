@@ -26,7 +26,7 @@ export async function getUserInfo(address: string) {
     energy,
     energyTotal,
     energyLocked,
-    minEnergyToWithdraw: 50,
+    minEnergyToWithdraw: 30, // ✅ 已修复：从 50 改为 30
     usdtAvailable,
     usdtTotal,
     usdtLocked,
@@ -50,7 +50,6 @@ export async function getTeamRewards(address: string) {
   const totalRewards = ethers.utils.formatEther(totalWei.toString());
 
   return {
-    address: addr,
     totalRewards,
     unit: 'RAT',
     updatedAt: new Date().toISOString(),
@@ -119,5 +118,3 @@ export async function getReferralHistory(address: string) {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 }
-
-

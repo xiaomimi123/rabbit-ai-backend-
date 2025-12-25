@@ -134,4 +134,3 @@ async function updateUserUsdtTotal(address: string, grossEarnings: number): Prom
     throw new Error(`Failed to update usdt_total: ${error?.message || error}`);
   }
 }
-

@@ -70,13 +70,11 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
 
   const feeRecipientBnbWei = await provider.getBalance(feeRecipient);
 
-  // on-chain: TVL (RAT in staking)
-  let tvlRat = null as null | { amount: string; symbol: string };
-  if (config.ratTokenContract && config.stakingContract) {
-    const rat = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
-    const [bal, dec, sym] = await Promise.all([rat.balanceOf(config.stakingContract), rat.decimals(), rat.symbol()]);
-    tvlRat = { amount: ethers.utils.formatUnits(bal, dec), symbol: sym };
-  }
+  // 持币生息模式：不再计算质押 TVL，改为计算总持币量（可选）
+  // 可以从 user_holdings 表汇总，或从链上统计
+  // 这里暂时返回 null，后续可以实现持币总量统计
+  let totalHoldings = null as null | { amount: string; symbol: string };
+  // TODO: 实现持币总量统计（从 user_holdings 表或链上汇总）
 
   return {
     ok: true,
@@ -94,7 +92,7 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
       cooldownSec: Number(cooldownSec),
       rewardRange: { min: String(minReward), max: String(maxReward) },
     },
-    tvl: tvlRat,
+    totalHoldings, // 持币总量（替代原来的 tvl）
     time: new Date().toISOString(),
   };
 }

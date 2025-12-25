@@ -56,7 +56,7 @@ export const config = {
   ratTokenContract: required('RAT_TOKEN_CONTRACT').toLowerCase(),
 
   // Optional: for Admin Panel / finance ops / KPIs
-  stakingContract: optionalStr('STAKING_CONTRACT').toLowerCase(),
+  // stakingContract: optionalStr('STAKING_CONTRACT').toLowerCase(), // 已移除：不再使用质押合约，改为持币生息模式
   usdtContract: optionalStr('USDT_CONTRACT').toLowerCase(),
   adminPayoutAddress: optionalStr('ADMIN_PAYOUT_ADDRESS').toLowerCase(),
   withdrawAlertThreshold: Number(process.env.WITHDRAW_ALERT_THRESHOLD || 1000),
