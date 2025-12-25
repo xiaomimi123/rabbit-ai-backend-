@@ -30,6 +30,9 @@ import {
   rejectWithdrawal,
   getFinanceRevenue,
   getFinanceExpenses,
+  getTopRATHolders,
+  getAdminUsdtBalance,
+  getRevenueStats,
 } from '../../services/admin.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: () => ethers.providers.Provider }) {
@@ -217,6 +220,44 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
       return await getFinanceExpenses(parsed.data.page, parsed.data.pageSize);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/top-holders?limit=5 - 获取 RAT 持币大户排行
+  app.get('/api/admin/top-holders', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const limit = Number((req.query as any)?.limit || 5);
+    if (limit < 1 || limit > 20) {
+      return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: 'limit must be between 1 and 20' });
+    }
+    try {
+      return await getTopRATHolders(deps.getProvider(), limit);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/usdt-balance - 获取管理员支付地址的 USDT 余额
+  app.get('/api/admin/usdt-balance', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const balance = await getAdminUsdtBalance(deps.getProvider());
+      return { ok: true, balance };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/revenue/stats - 获取收益统计信息
+  app.get('/api/admin/revenue/stats', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      return await getRevenueStats(deps.getProvider());
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

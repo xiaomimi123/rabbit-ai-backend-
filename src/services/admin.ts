@@ -475,6 +475,135 @@ export async function adminListRecentClaims(limit: number) {
   };
 }
 
+/**
+ * 获取 RAT 持币大户排行（Top Holders）
+ * 从数据库获取所有用户，然后从链上读取他们的 RAT 余额，按余额排序
+ */
+export async function getTopRATHolders(provider: ethers.providers.Provider, limit: number = 5) {
+  // 从数据库获取所有用户地址
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('address')
+    .limit(100); // 限制查询数量，避免 RPC 调用过多
+  if (error) throw error;
+
+  if (!users || users.length === 0) {
+    return { ok: true, items: [] };
+  }
+
+  // 从链上读取每个用户的 RAT 余额
+  const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
+  const decimals = await ratContract.decimals().catch(() => 18);
+
+  const balances = await Promise.all(
+    users.map(async (user: any) => {
+      try {
+        const balanceWei = await ratContract.balanceOf(user.address);
+        const balance = parseFloat(ethers.utils.formatUnits(balanceWei, decimals));
+        return {
+          address: user.address,
+          balance,
+        };
+      } catch (err) {
+        // 如果读取失败，返回余额 0
+        return {
+          address: user.address,
+          balance: 0,
+        };
+      }
+    })
+  );
+
+  // 按余额排序，取前 N 名
+  const topHolders = balances
+    .filter((item) => item.balance > 0)
+    .sort((a, b) => b.balance - a.balance)
+    .slice(0, limit)
+    .map((item, index) => ({
+      rank: index + 1,
+      address: item.address,
+      balance: item.balance,
+    }));
+
+  return { ok: true, items: topHolders };
+}
+
+/**
+ * 获取管理员支付地址的 USDT 余额（从链上读取）
+ */
+export async function getAdminUsdtBalance(provider: ethers.providers.Provider): Promise<string> {
+  const usdtAddr = await getUsdtContract();
+  if (!usdtAddr) {
+    throw new ApiError('CONFIG_ERROR', 'USDT_CONTRACT is not configured', 400);
+  }
+
+  const adminPayout = await getAdminPayoutAddress();
+  if (!adminPayout) {
+    throw new ApiError('CONFIG_ERROR', 'ADMIN_PAYOUT_ADDRESS is not configured', 400);
+  }
+
+  try {
+    const usdtContract = new ethers.Contract(usdtAddr, ERC20_ABI, provider);
+    const balanceWei = await usdtContract.balanceOf(adminPayout);
+    const decimals = await usdtContract.decimals().catch(() => 18);
+    const balance = ethers.utils.formatUnits(balanceWei, decimals);
+    return balance;
+  } catch (error: any) {
+    throw new ApiError('RPC_ERROR', `Failed to fetch USDT balance: ${error?.message || error}`, 500);
+  }
+}
+
+/**
+ * 获取收益统计信息（用于 Revenue 页面）
+ */
+export async function getRevenueStats(provider: ethers.providers.Provider) {
+  // 从链上读取 claimFee
+  const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
+  const claimFeeWei = await airdrop.claimFee();
+  const claimFee = parseFloat(ethers.utils.formatEther(claimFeeWei));
+
+  // 获取今日的收益记录数
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const { count: todayCount, error: todayErr } = await supabase
+    .from('claims')
+    .select('tx_hash', { count: 'exact', head: true })
+    .gte('created_at', todayStart.toISOString());
+  if (todayErr) throw todayErr;
+
+  // 获取昨日的收益记录数（用于计算趋势）
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const yesterdayEnd = new Date(todayStart);
+  const { count: yesterdayCount, error: yesterdayErr } = await supabase
+    .from('claims')
+    .select('tx_hash', { count: 'exact', head: true })
+    .gte('created_at', yesterdayStart.toISOString())
+    .lt('created_at', yesterdayEnd.toISOString());
+  if (yesterdayErr) throw yesterdayErr;
+
+  // 计算趋势（今日 vs 昨日）
+  const todayRevenue = (todayCount || 0) * claimFee;
+  const yesterdayRevenue = (yesterdayCount || 0) * claimFee;
+  const trend = yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : 0;
+
+  // 今日预期收益（基于当前速率，假设每小时速率不变）
+  const now = new Date();
+  const hoursElapsed = (now.getTime() - todayStart.getTime()) / (1000 * 60 * 60);
+  const estimatedDaily = hoursElapsed > 0 ? (todayRevenue / hoursElapsed) * 24 : 0;
+
+  // 平均单笔费率（就是 claimFee）
+  const avgFee = claimFee;
+
+  return {
+    ok: true,
+    totalRevenue: todayRevenue.toFixed(4),
+    trend: trend.toFixed(1), // 百分比
+    estimatedDaily: estimatedDaily.toFixed(4),
+    avgFee: avgFee.toFixed(4),
+  };
+}
+
 export async function adminAdjustUserEnergy(address: string, delta: number) {
   const addr = lower(address);
   if (!Number.isFinite(delta)) throw new ApiError('INVALID_REQUEST', 'Invalid delta', 400);
