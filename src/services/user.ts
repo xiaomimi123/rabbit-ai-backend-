@@ -57,4 +57,67 @@ export async function getTeamRewards(address: string) {
   };
 }
 
+/**
+ * 获取用户空投领取历史
+ * @param address 用户钱包地址
+ * @returns 空投领取记录数组
+ */
+export async function getClaimsHistory(address: string) {
+  const addr = address.toLowerCase();
+
+  const { data, error } = await supabase
+    .from('claims')
+    .select('tx_hash,amount_wei,created_at')
+    .eq('address', addr)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) throw error;
+
+  return (data || []).map((row: any) => ({
+    txHash: row.tx_hash,
+    amount: ethers.utils.formatEther(row.amount_wei || '0'),
+    energy: 1, // 每次领取空投 +1 能量
+    createdAt: row.created_at || new Date().toISOString(),
+  }));
+}
+
+/**
+ * 获取用户邀请历史（作为推荐人）
+ * @param address 推荐人钱包地址
+ * @returns 邀请记录数组
+ */
+export async function getReferralHistory(address: string) {
+  const addr = address.toLowerCase();
+
+  // 从 claims 表查询，找到所有 referrer = address 的记录（即被该用户邀请的人）
+  // 按时间升序排序，确保去重时保留第一次领取的记录
+  const { data, error } = await supabase
+    .from('claims')
+    .select('address,created_at')
+    .eq('referrer', addr)
+    .order('created_at', { ascending: true })
+    .limit(100);
+
+  if (error) throw error;
+
+  // 去重：同一个被邀请人可能多次领取，只返回第一次（最早的记录）
+  const uniqueAddresses = new Map<string, any>();
+  (data || []).forEach((row: any) => {
+    const invitedAddr = (row.address || '').toLowerCase();
+    if (invitedAddr && !uniqueAddresses.has(invitedAddr)) {
+      uniqueAddresses.set(invitedAddr, {
+        address: invitedAddr,
+        energy: 5, // 每次邀请成功 +5 能量
+        createdAt: row.created_at || new Date().toISOString(),
+      });
+    }
+  });
+
+  // 按创建时间降序返回（最新的在前）
+  return Array.from(uniqueAddresses.values()).sort((a, b) => {
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+}
+
 

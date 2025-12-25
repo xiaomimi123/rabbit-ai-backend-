@@ -483,4 +483,88 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
   };
 }
 
+/**
+ * 获取财务收益明细（BNB 收入）
+ * 从 claims 表统计用户领取空投产生的费用收入
+ */
+export async function getFinanceRevenue(provider: ethers.providers.Provider, page: number, pageSize: number) {
+  // 从链上读取 claimFee（每次查询时读取，确保数据准确）
+  const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
+  const claimFeeWei = await airdrop.claimFee();
+  const claimFee = ethers.utils.formatEther(claimFeeWei);
+
+  // 获取总数
+  const { count, error: countErr } = await supabase
+    .from('claims')
+    .select('tx_hash', { count: 'exact', head: true });
+  if (countErr) throw countErr;
+
+  // 分页查询
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const { data, error } = await supabase
+    .from('claims')
+    .select('tx_hash,address,created_at')
+    .order('created_at', { ascending: false })
+    .range(from, to);
+  if (error) throw error;
+
+  // 计算总收入 = claimFee * 总记录数
+  const totalRevenue = Number(claimFee) * Number(count || 0);
+
+  return {
+    ok: true,
+    items: (data || []).map((r: any) => ({
+      txHash: r.tx_hash,
+      address: r.address,
+      amount: claimFee,
+      unit: 'BNB',
+      createdAt: r.created_at,
+    })),
+    total: totalRevenue.toFixed(6),
+    totalCount: count || 0,
+  };
+}
+
+/**
+ * 获取财务支出明细（USDT 支出）
+ * 从 withdrawals 表统计已完成的提现记录
+ */
+export async function getFinanceExpenses(page: number, pageSize: number) {
+  // 获取总数和总支出
+  const { data: allData, error: allErr } = await supabase
+    .from('withdrawals')
+    .select('amount')
+    .eq('status', 'Completed');
+  if (allErr) throw allErr;
+
+  const totalExpense = (allData || []).reduce((sum: number, r: any) => sum + Number(r.amount || 0), 0);
+  const totalCount = allData?.length || 0;
+
+  // 分页查询
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const { data, error } = await supabase
+    .from('withdrawals')
+    .select('id,address,amount,payout_tx_hash,created_at,updated_at')
+    .eq('status', 'Completed')
+    .order('updated_at', { ascending: false })
+    .range(from, to);
+  if (error) throw error;
+
+  return {
+    ok: true,
+    items: (data || []).map((r: any) => ({
+      id: r.id,
+      address: r.address,
+      amount: String(r.amount),
+      payoutTxHash: r.payout_tx_hash,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    })),
+    total: totalExpense.toFixed(2),
+    totalCount,
+  };
+}
+
 

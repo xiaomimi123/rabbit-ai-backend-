@@ -52,8 +52,10 @@ export const config = {
   pollIntervalMs: optionalInt('POLL_INTERVAL_MS', 5000),
   chainSyncId: process.env.CHAIN_SYNC_ID || 'bsc_airdrop',
 
+  // Required: for Earnings calculation / RAT balance queries
+  ratTokenContract: required('RAT_TOKEN_CONTRACT').toLowerCase(),
+
   // Optional: for Admin Panel / finance ops / KPIs
-  ratTokenContract: optionalStr('RAT_TOKEN_CONTRACT').toLowerCase(),
   stakingContract: optionalStr('STAKING_CONTRACT').toLowerCase(),
   usdtContract: optionalStr('USDT_CONTRACT').toLowerCase(),
   adminPayoutAddress: optionalStr('ADMIN_PAYOUT_ADDRESS').toLowerCase(),

@@ -13,6 +13,7 @@ export type ApiErrorCode =
   | 'INVALID_PAYOUT'
   | 'UNAUTHORIZED'
   | 'ADMIN_DISABLED'
+  | 'RPC_ERROR'
   | 'INTERNAL_ERROR';
 
 export class ApiError extends Error {

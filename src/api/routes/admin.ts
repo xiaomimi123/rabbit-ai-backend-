@@ -10,6 +10,7 @@ import {
   AdminWithdrawCompleteBodySchema,
   AdminWithdrawListQuerySchema,
   AdminWithdrawRejectBodySchema,
+  AdminFinanceQuerySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -25,6 +26,8 @@ import {
   getUsdtInfo,
   listPendingWithdrawals,
   rejectWithdrawal,
+  getFinanceRevenue,
+  getFinanceExpenses,
 } from '../../services/admin.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: () => ethers.providers.Provider }) {
@@ -171,6 +174,30 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
       return await adminListRecentClaims(parsed.data.limit);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  app.get('/api/admin/finance/revenue', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminFinanceQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await getFinanceRevenue(deps.getProvider(), parsed.data.page, parsed.data.pageSize);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  app.get('/api/admin/finance/expenses', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminFinanceQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await getFinanceExpenses(parsed.data.page, parsed.data.pageSize);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

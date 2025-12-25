@@ -3,8 +3,12 @@ import { config } from './config.js';
 import { createServer } from './server.js';
 import { RpcPool } from './infra/rpcPool.js';
 import { startIndexer } from './indexer/indexer.js';
+import { loadVipTiers } from './services/vipConfig.js';
 
 async function main() {
+  // 在服务启动时加载 VIP 配置到内存
+  await loadVipTiers();
+
   const rpcPool = new RpcPool(config.rpcUrls);
 
   // provider factory with simple rotation on errors

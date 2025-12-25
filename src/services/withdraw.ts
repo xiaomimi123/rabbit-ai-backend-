@@ -26,9 +26,9 @@ export async function applyWithdraw(address: string, amountStr: string) {
     throw new ApiError('USDT_NOT_ENOUGH', `USDT not enough (available ${usdtAvailable}, need ${amount})`, 400);
   }
 
-  // 业务规则：提现需要能量 >= 50，且能量需覆盖提现金额（1 USDT = 1 Energy）
-  const minEnergyToWithdraw = 50;
-  const requiredEnergy = Math.max(minEnergyToWithdraw, amount);
+  // 业务规则：提现需要能量 >= 30，且能量需覆盖提现金额（1 USDT = 10 Energy）
+  const minEnergyToWithdraw = 30;
+  const requiredEnergy = Math.max(minEnergyToWithdraw, amount * 10);
   if (energyAvailable < requiredEnergy) {
     throw new ApiError('ENERGY_NOT_ENOUGH', `Energy not enough (need >= ${requiredEnergy})`, 400);
   }
@@ -59,7 +59,9 @@ export async function applyWithdraw(address: string, amountStr: string) {
   }
 
   // lock energy + lock usdt (best-effort consistency: if insert fails, try to rollback locks)
-  const nextEnergyLocked = energyLocked + amount;
+  // 能量消耗：1 USDT = 10 Energy
+  const energyCost = amount * 10;
+  const nextEnergyLocked = energyLocked + energyCost;
   const nextUsdtLocked = usdtLocked + amount;
   const createdAt = (user as any)?.created_at || new Date().toISOString();
 
@@ -85,7 +87,7 @@ export async function applyWithdraw(address: string, amountStr: string) {
       address: addr,
       amount,
       status: 'Pending',
-      energy_locked_amount: amount,
+      energy_locked_amount: energyCost,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })

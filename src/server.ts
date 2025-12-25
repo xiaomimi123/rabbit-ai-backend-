@@ -19,7 +19,7 @@ export function createServer(deps: { getProvider: () => ethers.providers.Provide
 
   registerHealthRoutes(app);
   registerUserRoutes(app);
-  registerAssetRoutes(app);
+  registerAssetRoutes(app, deps);
   registerMiningRoutes(app, deps);
   registerAdminRoutes(app, deps);
   registerDebugRoutes(app);

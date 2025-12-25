@@ -62,4 +62,9 @@ export const AdminAdjustUserUsdtBodySchema = z.object({
   reason: z.string().max(200).optional(),
 });
 
+export const AdminFinanceQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
+});
+
 
