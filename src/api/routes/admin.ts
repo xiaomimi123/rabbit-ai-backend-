@@ -11,6 +11,7 @@ import {
   AdminWithdrawListQuerySchema,
   AdminWithdrawRejectBodySchema,
   AdminFinanceQuerySchema,
+  AdminUserListQuerySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -20,6 +21,7 @@ import {
   adminGetUser,
   adminListRecentClaims,
   adminListRecentUsers,
+  adminListUsers,
   adminSetSystemConfig,
   completeWithdrawal,
   getAdminKpis,
@@ -162,6 +164,23 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
       return await adminListRecentUsers(parsed.data.limit);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/users/list - 用户列表（支持分页和搜索）
+  app.get('/api/admin/users/list', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminUserListQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await adminListUsers({
+        limit: parsed.data.limit,
+        offset: parsed.data.offset,
+        search: parsed.data.search,
+      });
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

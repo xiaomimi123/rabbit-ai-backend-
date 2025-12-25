@@ -411,6 +411,48 @@ export async function adminListRecentUsers(limit: number) {
   };
 }
 
+/**
+ * 获取用户列表（支持分页和搜索）
+ * 用于管理后台用户管理页面
+ */
+export async function adminListUsers(params: { limit: number; offset: number; search?: string }) {
+  let query = supabase
+    .from('users')
+    .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,created_at,updated_at', { count: 'exact' });
+
+  // 搜索功能：如果提供了搜索词，按地址搜索
+  if (params.search && params.search.trim()) {
+    const searchTerm = params.search.trim().toLowerCase();
+    query = query.ilike('address', `%${searchTerm}%`);
+  }
+
+  // 排序：按创建时间倒序
+  query = query.order('created_at', { ascending: false });
+
+  // 分页
+  const from = params.offset;
+  const to = from + params.limit - 1;
+  query = query.range(from, to);
+
+  const { data, error, count } = await query;
+  if (error) throw error;
+
+  return {
+    ok: true,
+    items: (data || []).map((r: any) => ({
+      address: r.address,
+      energyTotal: Number(r.energy_total || 0),
+      energyLocked: Number(r.energy_locked || 0),
+      inviteCount: Number(r.invite_count || 0),
+      referrer: r.referrer_address || null,
+      registeredAt: r.created_at,
+      lastActive: r.updated_at,
+      usdtBalance: Number(r.usdt_total || 0) - Number(r.usdt_locked || 0), // 可提现余额
+    })),
+    total: count || 0,
+  };
+}
+
 export async function adminListRecentClaims(limit: number) {
   const { data, error } = await supabase
     .from('claims')
