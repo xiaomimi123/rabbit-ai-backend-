@@ -26,11 +26,19 @@ export async function applyWithdraw(address: string, amountStr: string) {
     throw new ApiError('USDT_NOT_ENOUGH', `USDT not enough (available ${usdtAvailable}, need ${amount})`, 400);
   }
 
-  // 业务规则：提现需要能量 >= 30，且能量需覆盖提现金额（1 USDT = 10 Energy）
-  const minEnergyToWithdraw = 30;
-  const requiredEnergy = Math.max(minEnergyToWithdraw, amount * 10);
+  // ⚠️ 业务规则（风控参数）：
+  // 1. 最低提现能量阈值：30 Energy（不能低于此值）
+  // 2. 能量消耗比例：1 USDT = 10 Energy（不是 1:1！）
+  // 3. 所需能量 = max(最低阈值, 提现金额 × 10)
+  // 
+  // 示例：
+  // - 提现 1 USDT：需要 max(30, 1×10) = 30 Energy
+  // - 提现 5 USDT：需要 max(30, 5×10) = 50 Energy
+  // - 提现 10 USDT：需要 max(30, 10×10) = 100 Energy
+  const minEnergyToWithdraw = 30; // ✅ 已修复：从 50 改为 30
+  const requiredEnergy = Math.max(minEnergyToWithdraw, amount * 10); // ✅ 已修复：从 amount 改为 amount * 10
   if (energyAvailable < requiredEnergy) {
-    throw new ApiError('ENERGY_NOT_ENOUGH', `Energy not enough (need >= ${requiredEnergy})`, 400);
+    throw new ApiError('ENERGY_NOT_ENOUGH', `Energy not enough (need >= ${requiredEnergy}, available ${energyAvailable})`, 400);
   }
 
   // basic anti-dup: existing Pending within 5 minutes
@@ -59,8 +67,9 @@ export async function applyWithdraw(address: string, amountStr: string) {
   }
 
   // lock energy + lock usdt (best-effort consistency: if insert fails, try to rollback locks)
-  // 能量消耗：1 USDT = 10 Energy
-  const energyCost = amount * 10;
+  // ⚠️ 能量消耗计算：1 USDT = 10 Energy（不是 1:1！）
+  // 例如：提现 5 USDT 需要消耗 50 Energy
+  const energyCost = amount * 10; // ✅ 已修复：从 amount 改为 amount * 10
   const nextEnergyLocked = energyLocked + energyCost;
   const nextUsdtLocked = usdtLocked + amount;
   const createdAt = (user as any)?.created_at || new Date().toISOString();
