@@ -41,13 +41,31 @@ export async function getTeamRewards(address: string) {
 
   const { data, error } = await supabase
     .from('referral_rewards')
-    .select('amount_wei')
-    .eq('referrer_address', addr);
+    .select('amount_wei,created_at')
+    .eq('referrer_address', addr)
+    .order('created_at', { ascending: false });
 
-  if (error) throw error;
+  if (error) {
+    console.error('[getTeamRewards] Database error:', error);
+    throw error;
+  }
 
-  const totalWei = (data || []).reduce((acc: bigint, row: any) => acc + BigInt(row.amount_wei), 0n);
+  const totalWei = (data || []).reduce((acc: bigint, row: any) => {
+    try {
+      return acc + BigInt(row.amount_wei || '0');
+    } catch (e) {
+      console.warn('[getTeamRewards] Invalid amount_wei:', row.amount_wei, e);
+      return acc;
+    }
+  }, 0n);
+  
   const totalRewards = ethers.utils.formatEther(totalWei.toString());
+
+  console.log('[getTeamRewards] Calculated team rewards:', {
+    address: addr,
+    recordCount: data?.length || 0,
+    totalRewards,
+  });
 
   return {
     totalRewards,
@@ -84,31 +102,61 @@ export async function getClaimsHistory(address: string) {
 /**
  * 获取用户邀请历史（作为推荐人）
  * @param address 推荐人钱包地址
- * @returns 邀请记录数组
+ * @returns 邀请记录数组，包含被邀请人地址、奖励金额、时间等
  */
 export async function getReferralHistory(address: string) {
   const addr = address.toLowerCase();
 
+  // 从 referral_rewards 表查询，获取所有推荐奖励记录
+  // 这个表记录了每次推荐奖励的详细信息，包括奖励金额
+  const { data: rewardsData, error: rewardsError } = await supabase
+    .from('referral_rewards')
+    .select('tx_hash,amount_wei,created_at,block_time')
+    .eq('referrer_address', addr)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (rewardsError) throw rewardsError;
+
   // 从 claims 表查询，找到所有 referrer = address 的记录（即被该用户邀请的人）
-  // 按时间升序排序，确保去重时保留第一次领取的记录
-  const { data, error } = await supabase
+  // 用于获取被邀请人的地址和首次领取时间
+  const { data: claimsData, error: claimsError } = await supabase
     .from('claims')
-    .select('address,created_at')
+    .select('tx_hash,address,amount_wei,created_at')
     .eq('referrer', addr)
     .order('created_at', { ascending: true })
     .limit(100);
 
-  if (error) throw error;
+  if (claimsError) throw claimsError;
+
+  // 创建奖励金额映射：tx_hash -> amount_wei
+  const rewardMap = new Map<string, string>();
+  (rewardsData || []).forEach((row: any) => {
+    rewardMap.set(row.tx_hash.toLowerCase(), row.amount_wei);
+  });
 
   // 去重：同一个被邀请人可能多次领取，只返回第一次（最早的记录）
+  // 同时关联奖励金额
   const uniqueAddresses = new Map<string, any>();
-  (data || []).forEach((row: any) => {
+  (claimsData || []).forEach((row: any) => {
     const invitedAddr = (row.address || '').toLowerCase();
+    const txHash = (row.tx_hash || '').toLowerCase();
+    
     if (invitedAddr && !uniqueAddresses.has(invitedAddr)) {
+      // 从 rewardMap 获取奖励金额，如果没有则从 claims 的 amount_wei 计算 10%
+      let rewardWei = rewardMap.get(txHash);
+      if (!rewardWei && row.amount_wei) {
+        // 如果没有在 referral_rewards 表中找到，计算 10%
+        const claimAmount = BigInt(row.amount_wei || '0');
+        rewardWei = (claimAmount * BigInt(10) / BigInt(100)).toString();
+      }
+      
       uniqueAddresses.set(invitedAddr, {
         address: invitedAddr,
         energy: 5, // 每次邀请成功 +5 能量
+        rewardAmount: rewardWei ? ethers.utils.formatEther(rewardWei) : '0', // 奖励金额（RAT）
         createdAt: row.created_at || new Date().toISOString(),
+        txHash: row.tx_hash,
       });
     }
   });
