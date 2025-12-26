@@ -129,6 +129,52 @@ async function insertClaim(args: {
 
   // ensure user exists (Admin Panel user count)
   await ensureUserRow(args.address, args.referrer);
+
+  // 更新推荐人的 invite_count（如果这是该被邀请人的第一次领取）
+  const ref = lower(args.referrer);
+  if (ref && ref !== '0x0000000000000000000000000000000000000000') {
+    // 检查该被邀请人是否已经存在（如果已存在，说明不是第一次，不需要更新 invite_count）
+    const { data: existingClaim } = await supabase
+      .from('claims')
+      .select('tx_hash')
+      .eq('address', lower(args.address))
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    
+    // 如果这是该被邀请人的第一次领取（只有一条记录），更新推荐人的 invite_count
+    if (existingClaim && existingClaim.tx_hash === args.txHash) {
+      const { data: refData } = await supabase
+        .from('users')
+        .select('invite_count,created_at')
+        .eq('address', ref)
+        .maybeSingle();
+      
+      if (refData) {
+        const newInviteCount = Number((refData as any)?.invite_count || 0) + 1;
+        await supabase.from('users').upsert(
+          {
+            address: ref,
+            invite_count: newInviteCount,
+            updated_at: new Date().toISOString(),
+            created_at: (refData as any)?.created_at || new Date().toISOString(),
+          },
+          { onConflict: 'address' }
+        );
+      } else {
+        // 推荐人不存在，创建记录
+        await supabase.from('users').upsert(
+          {
+            address: ref,
+            invite_count: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'address' }
+        );
+      }
+    }
+  }
 }
 
 async function insertReferralReward(args: {
