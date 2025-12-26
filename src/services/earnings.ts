@@ -73,7 +73,27 @@ export async function calculateUserEarnings(
 
   // 步骤 5: 计算历史总收益 = Balance * 0.01 * Rate * Days
   const TOKEN_PRICE = 0.01; // $0.01 per RAT
-  const grossEarnings = balance * TOKEN_PRICE * dailyRate * daysHolding;
+  const calculatedGrossEarnings = balance * TOKEN_PRICE * dailyRate * daysHolding;
+
+  // 步骤 5.5: 读取数据库中的 usdt_total（可能包含后台赠送的USDT）
+  // ⚠️ 重要：如果后台赠送了USDT，数据库中的 usdt_total 会大于计算值
+  // 此时应该使用数据库值，以确保后台赠送的USDT能正确显示
+  const { data: userRow, error: userErr } = await supabase
+    .from('users')
+    .select('usdt_total')
+    .eq('address', addr)
+    .maybeSingle();
+
+  if (userErr) {
+    console.error(`[Earnings] Failed to query users.usdt_total for ${addr}:`, userErr);
+    // 如果查询失败，使用计算值
+  }
+
+  const dbUsdtTotal = Number((userRow as any)?.usdt_total || 0);
+  
+  // 使用数据库值（如果更大）或计算值
+  // 这样既能保持持币生息自动计算，又能兼容后台赠送逻辑
+  const grossEarnings = Math.max(dbUsdtTotal, calculatedGrossEarnings);
 
   // 步骤 6: 查询数据库 withdrawals 表，统计该用户所有状态为 Pending 或 Completed 的提现总额
   // ⚠️ 重要：必须统计 Pending 和 Completed 两种状态，因为：
