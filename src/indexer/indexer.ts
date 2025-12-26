@@ -112,6 +112,24 @@ async function insertClaim(args: {
   blockNumber: number;
   blockTimeIso: string | null;
 }) {
+  // 先检查该 tx_hash 是否已经处理过（幂等性检查）
+  const { data: existingTx } = await supabase
+    .from('claims')
+    .select('tx_hash')
+    .eq('tx_hash', args.txHash)
+    .maybeSingle();
+  
+  const isNewTx = !existingTx;
+  
+  // 检查该被邀请人是否已经领取过（用于判断是否需要更新推荐人的 invite_count）
+  const { data: existingClaims } = await supabase
+    .from('claims')
+    .select('tx_hash')
+    .eq('address', lower(args.address))
+    .limit(1);
+  
+  const isFirstClaim = !existingClaims || existingClaims.length === 0;
+
   const { error } = await supabase.from('claims').upsert(
     {
       tx_hash: args.txHash,
@@ -130,49 +148,41 @@ async function insertClaim(args: {
   // ensure user exists (Admin Panel user count)
   await ensureUserRow(args.address, args.referrer);
 
-  // 更新推荐人的 invite_count（如果这是该被邀请人的第一次领取）
+  // 更新推荐人的 invite_count（如果这是该被邀请人的第一次领取，且是新交易）
   const ref = lower(args.referrer);
-  if (ref && ref !== '0x0000000000000000000000000000000000000000') {
-    // 检查该被邀请人是否已经存在（如果已存在，说明不是第一次，不需要更新 invite_count）
-    const { data: existingClaim } = await supabase
-      .from('claims')
-      .select('tx_hash')
-      .eq('address', lower(args.address))
-      .order('created_at', { ascending: true })
-      .limit(1)
+  if (ref && ref !== '0x0000000000000000000000000000000000000000' && isNewTx && isFirstClaim) {
+    const { data: refData } = await supabase
+      .from('users')
+      .select('invite_count,energy_total,energy_locked,created_at')
+      .eq('address', ref)
       .maybeSingle();
     
-    // 如果这是该被邀请人的第一次领取（只有一条记录），更新推荐人的 invite_count
-    if (existingClaim && existingClaim.tx_hash === args.txHash) {
-      const { data: refData } = await supabase
-        .from('users')
-        .select('invite_count,created_at')
-        .eq('address', ref)
-        .maybeSingle();
-      
-      if (refData) {
-        const newInviteCount = Number((refData as any)?.invite_count || 0) + 1;
-        await supabase.from('users').upsert(
-          {
-            address: ref,
-            invite_count: newInviteCount,
-            updated_at: new Date().toISOString(),
-            created_at: (refData as any)?.created_at || new Date().toISOString(),
-          },
-          { onConflict: 'address' }
-        );
-      } else {
-        // 推荐人不存在，创建记录
-        await supabase.from('users').upsert(
-          {
-            address: ref,
-            invite_count: 1,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'address' }
-        );
-      }
+    if (refData) {
+      const newInviteCount = Number((refData as any)?.invite_count || 0) + 1;
+      await supabase.from('users').upsert(
+        {
+          address: ref,
+          invite_count: newInviteCount,
+          energy_total: Number((refData as any)?.energy_total || 0),
+          energy_locked: Number((refData as any)?.energy_locked || 0),
+          updated_at: new Date().toISOString(),
+          created_at: (refData as any)?.created_at || new Date().toISOString(),
+        },
+        { onConflict: 'address' }
+      );
+    } else {
+      // 推荐人不存在，创建记录
+      await supabase.from('users').upsert(
+        {
+          address: ref,
+          invite_count: 1,
+          energy_total: 0,
+          energy_locked: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'address' }
+      );
     }
   }
 }
