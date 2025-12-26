@@ -143,7 +143,12 @@ export async function getReferralHistory(address: string) {
   // 创建奖励金额映射：tx_hash -> amount_wei
   const rewardMap = new Map<string, string>();
   (rewardsData || []).forEach((row: any) => {
-    rewardMap.set(row.tx_hash.toLowerCase(), row.amount_wei);
+    // 处理 amount_wei：去掉小数点（如果有）
+    let amountWei = String(row.amount_wei || '0').trim();
+    if (amountWei.includes('.')) {
+      amountWei = amountWei.split('.')[0];
+    }
+    rewardMap.set(row.tx_hash.toLowerCase(), amountWei);
   });
 
   // 去重：同一个被邀请人可能多次领取，只返回第一次（最早的记录）
