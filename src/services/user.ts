@@ -158,14 +158,25 @@ export async function getReferralHistory(address: string) {
       let rewardWei = rewardMap.get(txHash);
       if (!rewardWei && row.amount_wei) {
         // 如果没有在 referral_rewards 表中找到，计算 10%
-        const claimAmount = BigInt(row.amount_wei || '0');
+        let claimAmountStr = String(row.amount_wei || '0').trim();
+        // 处理小数点：只取整数部分
+        if (claimAmountStr.includes('.')) {
+          claimAmountStr = claimAmountStr.split('.')[0];
+        }
+        const claimAmount = BigInt(claimAmountStr);
         rewardWei = (claimAmount * BigInt(10) / BigInt(100)).toString();
+      }
+      
+      // 处理 rewardWei：确保是整数字符串（去掉小数点）
+      let rewardWeiStr = rewardWei || '0';
+      if (typeof rewardWeiStr === 'string' && rewardWeiStr.includes('.')) {
+        rewardWeiStr = rewardWeiStr.split('.')[0];
       }
       
       uniqueAddresses.set(invitedAddr, {
         address: invitedAddr,
         energy: 5, // 每次邀请成功 +5 能量
-        rewardAmount: rewardWei ? ethers.utils.formatEther(rewardWei) : '0', // 奖励金额（RAT）
+        rewardAmount: rewardWeiStr ? ethers.utils.formatEther(rewardWeiStr) : '0', // 奖励金额（RAT）
         createdAt: row.created_at || new Date().toISOString(),
         txHash: row.tx_hash,
       });
