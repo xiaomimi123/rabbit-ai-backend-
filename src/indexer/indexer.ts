@@ -148,7 +148,7 @@ async function insertClaim(args: {
   // ensure user exists (Admin Panel user count)
   await ensureUserRow(args.address, args.referrer);
 
-  // 更新推荐人的 invite_count（如果这是该被邀请人的第一次领取，且是新交易）
+  // 更新推荐人的 invite_count 和 energy_total（如果这是该被邀请人的第一次领取，且是新交易）
   const ref = lower(args.referrer);
   if (ref && ref !== '0x0000000000000000000000000000000000000000' && isNewTx && isFirstClaim) {
     const { data: refData } = await supabase
@@ -159,11 +159,13 @@ async function insertClaim(args: {
     
     if (refData) {
       const newInviteCount = Number((refData as any)?.invite_count || 0) + 1;
+      // ✅ 立即奖励推荐人 +5 能量（而不是等到 CooldownReset 事件）
+      const newEnergyTotal = Number((refData as any)?.energy_total || 0) + 5;
       await supabase.from('users').upsert(
         {
           address: ref,
           invite_count: newInviteCount,
-          energy_total: Number((refData as any)?.energy_total || 0),
+          energy_total: newEnergyTotal,
           energy_locked: Number((refData as any)?.energy_locked || 0),
           updated_at: new Date().toISOString(),
           created_at: (refData as any)?.created_at || new Date().toISOString(),
@@ -171,12 +173,12 @@ async function insertClaim(args: {
         { onConflict: 'address' }
       );
     } else {
-      // 推荐人不存在，创建记录
+      // 推荐人不存在，创建记录并奖励能量
       await supabase.from('users').upsert(
         {
           address: ref,
           invite_count: 1,
-          energy_total: 0,
+          energy_total: 5, // ✅ 立即奖励 +5 能量
           energy_locked: 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
