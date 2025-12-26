@@ -80,4 +80,9 @@ export const AdminAdjustAssetBodySchema = z.object({
   amount: z.string().regex(/^\d+(\.\d+)?$/, 'Invalid amount'),
 });
 
+// 系统公告更新请求体
+export const AdminUpdateAnnouncementBodySchema = z.object({
+  content: z.string().min(1, '公告内容不能为空').max(5000, '公告内容不能超过 5000 字符'),
+});
+
 
