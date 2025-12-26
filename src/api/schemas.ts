@@ -73,4 +73,11 @@ export const AdminUserListQuerySchema = z.object({
   search: z.string().max(200).optional(),
 });
 
+export const AdminAdjustAssetBodySchema = z.object({
+  address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid address'),
+  asset: z.enum(['RAT', 'USDT']),
+  action: z.enum(['add', 'sub']),
+  amount: z.string().regex(/^\d+(\.\d+)?$/, 'Invalid amount'),
+});
+
 

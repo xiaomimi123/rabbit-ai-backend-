@@ -12,6 +12,7 @@ import {
   AdminWithdrawRejectBodySchema,
   AdminFinanceQuerySchema,
   AdminUserListQuerySchema,
+  AdminUpdateAnnouncementBodySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -34,6 +35,7 @@ import {
   getAdminUsdtBalance,
   getRevenueStats,
 } from '../../services/admin.js';
+import { getSystemAnnouncement, updateSystemAnnouncement } from '../../services/system.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: () => ethers.providers.Provider }) {
   app.get('/api/admin/kpis', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -258,6 +260,41 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!assertAdmin(req, reply)) return;
     try {
       return await getRevenueStats(deps.getProvider());
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/system/announcement - 获取系统公告（管理员）
+  app.get('/api/admin/system/announcement', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const data = await getSystemAnnouncement();
+      // 管理员接口：即使没有公告也返回空对象，而不是 404
+      return {
+        ok: true,
+        announcement: data || null,
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // PUT /api/admin/system/announcement - 更新系统公告（管理员）
+  app.put('/api/admin/system/announcement', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminUpdateAnnouncementBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    }
+    try {
+      const data = await updateSystemAnnouncement(parsed.data.content);
+      return {
+        ok: true,
+        announcement: data,
+      };
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
