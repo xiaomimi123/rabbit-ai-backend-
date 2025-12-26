@@ -76,20 +76,33 @@ export async function calculateUserEarnings(
   const grossEarnings = balance * TOKEN_PRICE * dailyRate * daysHolding;
 
   // 步骤 6: 查询数据库 withdrawals 表，统计该用户所有状态为 Pending 或 Completed 的提现总额
+  // ⚠️ 重要：必须统计 Pending 和 Completed 两种状态，因为：
+  // - Pending: 已申请但未完成，但金额已被锁定，应从可提现余额中扣除
+  // - Completed: 已完成提现，金额已实际转出，必须扣除
   const { data: withdrawals, error: withdrawErr } = await supabase
     .from('withdrawals')
     .select('amount,status')
     .eq('address', addr)
     .in('status', ['Pending', 'Completed']);
 
-  if (withdrawErr) throw withdrawErr;
+  if (withdrawErr) {
+    console.error(`[Earnings] Failed to query withdrawals for ${addr}:`, withdrawErr);
+    throw withdrawErr;
+  }
 
+  // 计算总提现金额（包括 Pending 和 Completed）
   const totalWithdrawn = (withdrawals || []).reduce((sum: number, w: any) => {
-    return sum + Number(w.amount || 0);
+    const amount = Number(w.amount || 0);
+    return sum + amount;
   }, 0);
 
-  // 步骤 7: 计算当前可领收益 = GrossEarnings - TotalWithdrawn，如果小于 0，返回 0
+  // 步骤 7: 计算当前可领收益 = 历史总收益 - 已提现总额
+  // ⚠️ 关键修复：必须减去所有 Pending 和 Completed 的提现金额
+  // 如果计算结果小于 0，返回 0（不能为负数）
   const netEarnings = Math.max(0, grossEarnings - totalWithdrawn);
+
+  // 调试日志：记录计算过程
+  console.log(`[Earnings] User ${addr}: grossEarnings=${grossEarnings.toFixed(2)}, totalWithdrawn=${totalWithdrawn.toFixed(2)}, netEarnings=${netEarnings.toFixed(2)}`);
 
   // 步骤 8: 异步更新 users 表的 usdt_total 字段（不阻塞返回）
   // 注意：这是为了管理员后台能看到大致数据，不影响 API 响应
