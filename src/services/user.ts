@@ -52,7 +52,18 @@ export async function getTeamRewards(address: string) {
 
   const totalWei = (data || []).reduce((acc: bigint, row: any) => {
     try {
-      return acc + BigInt(row.amount_wei || '0');
+      // 处理 amount_wei：去掉小数点和小数部分（如果有）
+      let amountStr = String(row.amount_wei || '0').trim();
+      // 如果包含小数点，只取整数部分
+      if (amountStr.includes('.')) {
+        amountStr = amountStr.split('.')[0];
+      }
+      // 确保是有效的整数字符串
+      if (!/^\d+$/.test(amountStr)) {
+        console.warn('[getTeamRewards] Invalid amount_wei format:', row.amount_wei);
+        return acc;
+      }
+      return acc + BigInt(amountStr);
     } catch (e) {
       console.warn('[getTeamRewards] Invalid amount_wei:', row.amount_wei, e);
       return acc;
