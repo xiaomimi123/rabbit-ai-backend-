@@ -52,7 +52,12 @@ export const config = {
   pollIntervalMs: optionalInt('POLL_INTERVAL_MS', 5000),
   chainSyncId: process.env.CHAIN_SYNC_ID || 'bsc_airdrop',
 
-  // Required: for Earnings calculation / RAT balance queries
+  // ⚠️ Required: for Earnings calculation / RAT balance queries
+  // 如果未配置此变量，服务启动时会直接失败（Fail Fast），避免运行时错误
+  // 使用场景：
+  // - 收益计算引擎（earnings.ts）：读取链上 RAT 余额
+  // - 资产查询 API（asset.ts）：获取用户 RAT 余额
+  // - 管理员后台（admin.ts）：显示用户 RAT 持仓
   ratTokenContract: required('RAT_TOKEN_CONTRACT').toLowerCase(),
 
   // Optional: for Admin Panel / finance ops / KPIs
