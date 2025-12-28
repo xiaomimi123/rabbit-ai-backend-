@@ -26,7 +26,7 @@ export async function getUserInfo(address: string) {
     energy,
     energyTotal,
     energyLocked,
-    minEnergyToWithdraw: 30, // ✅ 已修复：从 50 改为 30
+    // ✅ 已移除：不再有最低能量门槛，只需满足 1 USDT = 10 能量的关系
     usdtAvailable,
     usdtTotal,
     usdtLocked,
