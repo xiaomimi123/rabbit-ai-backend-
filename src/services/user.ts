@@ -129,13 +129,12 @@ export async function getReferralHistory(address: string) {
 
   if (rewardsError) throw rewardsError;
 
-  // 从 claims 表查询，找到所有 referrer = address 的记录（即被该用户邀请的人）
-  // 用于获取被邀请人的地址和首次领取时间
+  // ✅ 修改：返回所有 claims 记录（不只是第一次），用于显示每次下级领取的能量奖励
   const { data: claimsData, error: claimsError } = await supabase
     .from('claims')
     .select('tx_hash,address,amount_wei,created_at')
     .eq('referrer', addr)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(100);
 
   if (claimsError) throw claimsError;
@@ -151,45 +150,60 @@ export async function getReferralHistory(address: string) {
     rewardMap.set(row.tx_hash.toLowerCase(), amountWei);
   });
 
-  // 去重：同一个被邀请人可能多次领取，只返回第一次（最早的记录）
-  // 同时关联奖励金额
-  const uniqueAddresses = new Map<string, any>();
+  // ✅ 修改：记录每个被邀请人的第一次领取时间，用于计算能量奖励
+  const firstClaimMap = new Map<string, string>();
   (claimsData || []).forEach((row: any) => {
     const invitedAddr = (row.address || '').toLowerCase();
-    const txHash = (row.tx_hash || '').toLowerCase();
-    
-    if (invitedAddr && !uniqueAddresses.has(invitedAddr)) {
-      // 从 rewardMap 获取奖励金额，如果没有则从 claims 的 amount_wei 计算 10%
-      let rewardWei = rewardMap.get(txHash);
-      if (!rewardWei && row.amount_wei) {
-        // 如果没有在 referral_rewards 表中找到，计算 10%
-        let claimAmountStr = String(row.amount_wei || '0').trim();
-        // 处理小数点：只取整数部分
-        if (claimAmountStr.includes('.')) {
-          claimAmountStr = claimAmountStr.split('.')[0];
-        }
-        const claimAmount = BigInt(claimAmountStr);
-        rewardWei = (claimAmount * BigInt(10) / BigInt(100)).toString();
-      }
-      
-      // 处理 rewardWei：确保是整数字符串（去掉小数点）
-      let rewardWeiStr = rewardWei || '0';
-      if (typeof rewardWeiStr === 'string' && rewardWeiStr.includes('.')) {
-        rewardWeiStr = rewardWeiStr.split('.')[0];
-      }
-      
-      uniqueAddresses.set(invitedAddr, {
-        address: invitedAddr,
-        energy: 5, // 每次邀请成功 +5 能量
-        rewardAmount: rewardWeiStr ? ethers.utils.formatEther(rewardWeiStr) : '0', // 奖励金额（RAT）
-        createdAt: row.created_at || new Date().toISOString(),
-        txHash: row.tx_hash,
-      });
+    if (invitedAddr && !firstClaimMap.has(invitedAddr)) {
+      firstClaimMap.set(invitedAddr, row.created_at || new Date().toISOString());
     }
   });
 
+  // ✅ 修改：返回所有 claims 记录，计算每次的能量奖励
+  const result: any[] = [];
+  (claimsData || []).forEach((row: any) => {
+    const invitedAddr = (row.address || '').toLowerCase();
+    const txHash = (row.tx_hash || '').toLowerCase();
+    const createdAt = row.created_at || new Date().toISOString();
+    
+    // 判断是否是第一次领取
+    const firstClaimTime = firstClaimMap.get(invitedAddr);
+    const isFirstClaim = firstClaimTime === createdAt;
+    
+    // ✅ 计算能量奖励：第一次领取 = 2（邀请）+ 1（管道）= 3，之后每次 = 1（管道）
+    const energyReward = isFirstClaim ? 3 : 1;
+    
+    // 从 rewardMap 获取奖励金额，如果没有则从 claims 的 amount_wei 计算 10%
+    let rewardWei = rewardMap.get(txHash);
+    if (!rewardWei && row.amount_wei) {
+      // 如果没有在 referral_rewards 表中找到，计算 10%
+      let claimAmountStr = String(row.amount_wei || '0').trim();
+      // 处理小数点：只取整数部分
+      if (claimAmountStr.includes('.')) {
+        claimAmountStr = claimAmountStr.split('.')[0];
+      }
+      const claimAmount = BigInt(claimAmountStr);
+      rewardWei = (claimAmount * BigInt(10) / BigInt(100)).toString();
+    }
+    
+    // 处理 rewardWei：确保是整数字符串（去掉小数点）
+    let rewardWeiStr = rewardWei || '0';
+    if (typeof rewardWeiStr === 'string' && rewardWeiStr.includes('.')) {
+      rewardWeiStr = rewardWeiStr.split('.')[0];
+    }
+    
+    result.push({
+      address: invitedAddr,
+      energy: energyReward, // ✅ 动态计算能量奖励
+      rewardAmount: rewardWeiStr ? ethers.utils.formatEther(rewardWeiStr) : '0', // 奖励金额（RAT）
+      createdAt: createdAt,
+      txHash: row.tx_hash,
+      isFirstClaim: isFirstClaim, // 标记是否是第一次领取
+    });
+  });
+
   // 按创建时间降序返回（最新的在前）
-  return Array.from(uniqueAddresses.values()).sort((a, b) => {
+  return result.sort((a, b) => {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 }
