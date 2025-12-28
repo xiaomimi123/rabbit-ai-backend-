@@ -222,6 +222,8 @@ async function insertReferralReward(args: {
 
 async function handleCooldownReset(args: { txHash: string; referrer: string; blockNumber: number; blockTimeIso: string | null }) {
   // insert cooldown_resets (tx_hash PK => idempotent)
+  // ✅ 修复：只记录 cooldown_resets 事件，不再处理能量奖励
+  // 能量奖励统一在 insertClaim 中处理，避免重复奖励
   const insert = await supabase.from('cooldown_resets').insert({
     tx_hash: args.txHash,
     referrer_address: args.referrer,
@@ -233,25 +235,8 @@ async function handleCooldownReset(args: { txHash: string; referrer: string; blo
   // already processed
   if (insert.error && String(insert.error.message || '').toLowerCase().includes('duplicate')) return;
   if (insert.error) throw insert.error;
-
-  // MVP rule: invite_count + 1, energy_total + 2 (邀请奖励已改为 2 点)
-  const { data, error } = await supabase.from('users').select('invite_count,energy_total,created_at').eq('address', args.referrer).maybeSingle();
-  if (error) throw error;
-
-  const inviteCount = Number((data as any)?.invite_count || 0) + 1;
-  const energyTotal = Number((data as any)?.energy_total || 0) + 2; // ✅ 邀请奖励：从 5 改为 2
-
-  const { error: upErr } = await supabase.from('users').upsert(
-    {
-      address: args.referrer,
-      invite_count: inviteCount,
-      energy_total: energyTotal,
-      updated_at: new Date().toISOString(),
-      created_at: (data as any)?.created_at || new Date().toISOString(),
-    },
-    { onConflict: 'address' }
-  );
-  if (upErr) throw upErr;
+  
+  // ✅ 已删除能量奖励逻辑，避免与 insertClaim 重复奖励
 }
 
 async function runOnce(provider: ethers.providers.Provider): Promise<void> {
@@ -334,7 +319,24 @@ async function runOnce(provider: ethers.providers.Provider): Promise<void> {
     if (parsed.name === 'Claimed') {
       const user = lower(parsed.args.user);
       const amountWei = (parsed.args.amount as ethers.BigNumber).toString();
-      const referrer = await decodeReferrerFromTx(provider, iface, log.transactionHash);
+      // ✅ 修复：优先从数据库获取 referrer，如果数据库没有再用 decodeReferrerFromTx
+      let referrer = '0x0000000000000000000000000000000000000000';
+      try {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('referrer_address')
+          .eq('address', user)
+          .maybeSingle();
+        if (userData && (userData as any)?.referrer_address) {
+          referrer = lower((userData as any).referrer_address);
+        } else {
+          // 数据库没有 referrer，尝试从交易数据解析
+          referrer = await decodeReferrerFromTx(provider, iface, log.transactionHash);
+        }
+      } catch (e) {
+        // 如果查询失败，回退到解析交易数据
+        referrer = await decodeReferrerFromTx(provider, iface, log.transactionHash);
+      }
       await insertClaim({ txHash: log.transactionHash, address: user, referrer, amountWei, blockNumber: bn, blockTimeIso });
       continue;
     }
