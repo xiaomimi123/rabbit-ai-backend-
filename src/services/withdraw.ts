@@ -27,16 +27,15 @@ export async function applyWithdraw(address: string, amountStr: string) {
   }
 
   // ⚠️ 业务规则（风控参数）：
-  // 1. 最低提现能量阈值：30 Energy（不能低于此值）
-  // 2. 能量消耗比例：1 USDT = 10 Energy（不是 1:1！）
-  // 3. 所需能量 = max(最低阈值, 提现金额 × 10)
+  // 1. 能量消耗比例：1 USDT = 10 Energy（不是 1:1！）
+  // 2. 所需能量 = 提现金额 × 10（已取消最低 30 能量门槛）
   // 
   // 示例：
-  // - 提现 1 USDT：需要 max(30, 1×10) = 30 Energy
-  // - 提现 5 USDT：需要 max(30, 5×10) = 50 Energy
-  // - 提现 10 USDT：需要 max(30, 10×10) = 100 Energy
-  const minEnergyToWithdraw = 30; // ✅ 已修复：从 50 改为 30
-  const requiredEnergy = Math.max(minEnergyToWithdraw, amount * 10); // ✅ 已修复：从 amount 改为 amount * 10
+  // - 提现 0.1 USDT：需要 0.1×10 = 1 Energy
+  // - 提现 1 USDT：需要 1×10 = 10 Energy
+  // - 提现 5 USDT：需要 5×10 = 50 Energy
+  // - 提现 10 USDT：需要 10×10 = 100 Energy
+  const requiredEnergy = amount * 10; // ✅ 已取消最低 30 能量门槛
   if (energyAvailable < requiredEnergy) {
     throw new ApiError('ENERGY_NOT_ENOUGH', `Energy not enough (need >= ${requiredEnergy}, available ${energyAvailable})`, 400);
   }
