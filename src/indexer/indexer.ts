@@ -148,19 +148,29 @@ async function insertClaim(args: {
   // ensure user exists (Admin Panel user count)
   await ensureUserRow(args.address, args.referrer);
 
-  // 更新推荐人的 invite_count 和 energy_total（如果这是该被邀请人的第一次领取，且是新交易）
+  // 处理推荐人的能量奖励（仅对新交易处理，保证幂等性）
   const ref = lower(args.referrer);
-  if (ref && ref !== '0x0000000000000000000000000000000000000000' && isNewTx && isFirstClaim) {
+  if (ref && ref !== '0x0000000000000000000000000000000000000000' && isNewTx) {
     const { data: refData } = await supabase
       .from('users')
       .select('invite_count,energy_total,energy_locked,created_at')
       .eq('address', ref)
       .maybeSingle();
     
+    let energyReward = 0;
+    let newInviteCount = Number((refData as any)?.invite_count || 0);
+    
+    // 1. 邀请奖励：如果是第一次领取，奖励 +2 能量
+    if (isFirstClaim) {
+      newInviteCount += 1;
+      energyReward += 2; // ✅ 邀请奖励：从 5 改为 2
+    }
+    
+    // 2. 管道收益：每次下级领取空投，上级获得 +1 能量
+    energyReward += 1; // ✅ 管道收益：+1 能量
+    
     if (refData) {
-      const newInviteCount = Number((refData as any)?.invite_count || 0) + 1;
-      // ✅ 立即奖励推荐人 +5 能量（而不是等到 CooldownReset 事件）
-      const newEnergyTotal = Number((refData as any)?.energy_total || 0) + 5;
+      const newEnergyTotal = Number((refData as any)?.energy_total || 0) + energyReward;
       await supabase.from('users').upsert(
         {
           address: ref,
@@ -177,8 +187,8 @@ async function insertClaim(args: {
       await supabase.from('users').upsert(
         {
           address: ref,
-          invite_count: 1,
-          energy_total: 5, // ✅ 立即奖励 +5 能量
+          invite_count: newInviteCount > 0 ? newInviteCount : 1,
+          energy_total: energyReward,
           energy_locked: 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -224,12 +234,12 @@ async function handleCooldownReset(args: { txHash: string; referrer: string; blo
   if (insert.error && String(insert.error.message || '').toLowerCase().includes('duplicate')) return;
   if (insert.error) throw insert.error;
 
-  // MVP rule: invite_count + 1, energy_total + 5
+  // MVP rule: invite_count + 1, energy_total + 2 (邀请奖励已改为 2 点)
   const { data, error } = await supabase.from('users').select('invite_count,energy_total,created_at').eq('address', args.referrer).maybeSingle();
   if (error) throw error;
 
   const inviteCount = Number((data as any)?.invite_count || 0) + 1;
-  const energyTotal = Number((data as any)?.energy_total || 0) + 5;
+  const energyTotal = Number((data as any)?.energy_total || 0) + 2; // ✅ 邀请奖励：从 5 改为 2
 
   const { error: upErr } = await supabase.from('users').upsert(
     {
