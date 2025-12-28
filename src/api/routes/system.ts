@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { toErrorResponse } from '../errors.js';
-import { getSystemLinks, getSystemAnnouncement } from '../../services/system.js';
+import { getSystemLinks, getSystemAnnouncement, getCountdownConfig } from '../../services/system.js';
 
 export function registerSystemRoutes(app: FastifyInstance) {
   // GET /api/system/links
@@ -29,6 +29,18 @@ export function registerSystemRoutes(app: FastifyInstance) {
         return reply.status(404).send({ ok: false, code: 'NOT_FOUND', message: 'No announcement found' });
       }
       return data;
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/system/countdown-config
+  // 返回倒计时配置（公开 API，无需认证）
+  app.get('/api/system/countdown-config', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const data = await getCountdownConfig();
+      return { ok: true, ...data };
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
