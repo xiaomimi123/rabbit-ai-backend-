@@ -160,6 +160,7 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   let claimedAmountWei: string | null = null;
   let referralRewardWei: string | null = null;
   let referralRewardReferrer: string | null = null;
+  let cooldownResetReferrer: string | null = null;
   
   for (const log of receipt.logs) {
     if (!log.address || log.address.toLowerCase() !== expectedTo) continue;
@@ -175,6 +176,10 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
         const referrer = String(parsed.args.referrer).toLowerCase();
         referralRewardWei = (parsed.args.amount as ethers.BigNumber).toString();
         referralRewardReferrer = referrer;
+      }
+      if (parsed.name === 'CooldownReset') {
+        const referrer = String(parsed.args.referrer).toLowerCase();
+        cooldownResetReferrer = referrer;
       }
     } catch {
       // ignore
@@ -233,6 +238,27 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
       // 不抛出错误，因为主要功能（claim）已经成功
     } else {
       console.log('[verifyClaim] ✅ 成功插入推荐奖励记录');
+    }
+  }
+
+  // ✅ 处理冷却时间重置（如果有 CooldownReset 事件）
+  if (cooldownResetReferrer) {
+    const refAddr = cooldownResetReferrer.toLowerCase();
+    const { error: cooldownErr } = await supabase.from('cooldown_resets').upsert(
+      {
+        tx_hash: txHash,
+        referrer_address: refAddr,
+        block_number: receipt.blockNumber,
+        block_time: blockTimeIso,
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: 'tx_hash' }
+    );
+    if (cooldownErr) {
+      console.error('[verifyClaim] 插入冷却时间重置失败:', cooldownErr);
+      // 不抛出错误，因为主要功能（claim）已经成功
+    } else {
+      console.log('[verifyClaim] ✅ 成功插入冷却时间重置记录，推荐人:', refAddr);
     }
   }
 
