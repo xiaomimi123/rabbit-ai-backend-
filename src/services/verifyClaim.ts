@@ -124,10 +124,56 @@ async function awardEnergyOnceForTx(address: string, txHash: string) {
   return { ok: true, awarded: true };
 }
 
+// ✅ 检查数据库函数是否存在
+async function checkProcessClaimEnergyFunction(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc('process_claim_energy', {
+      p_tx_hash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      p_address: '0x0000000000000000000000000000000000000000',
+      p_referrer: '0x0000000000000000000000000000000000000000',
+      p_amount_wei: '0',
+      p_block_number: 0,
+      p_block_time: new Date().toISOString(),
+    });
+    // 即使返回错误，只要不是"函数不存在"的错误，说明函数存在
+    if (error) {
+      const errorMsg = String(error.message || '').toLowerCase();
+      // 如果错误是函数不存在，返回 false
+      if (errorMsg.includes('function') && errorMsg.includes('does not exist')) {
+        return false;
+      }
+      // 其他错误（如参数验证错误）说明函数存在
+      return true;
+    }
+    return true;
+  } catch (e: any) {
+    const errorMsg = String(e?.message || '').toLowerCase();
+    if (errorMsg.includes('function') && errorMsg.includes('does not exist')) {
+      return false;
+    }
+    // 其他异常，假设函数存在（可能是网络问题等）
+    return true;
+  }
+}
+
 export async function verifyClaim(params: { provider: ethers.providers.Provider; address: string; txHash: string; referrer: string }) {
   const address = params.address.toLowerCase();
   const txHash = params.txHash;
   const expectedTo = config.airdropContract;
+  
+  // ✅ 修复：确保 referrer 总是有效值（处理 null/undefined/空字符串）
+  let validReferrer = '0x0000000000000000000000000000000000000000';
+  if (params.referrer && typeof params.referrer === 'string' && params.referrer.trim() !== '') {
+    const refLower = params.referrer.toLowerCase().trim();
+    // 验证是否为有效的以太坊地址格式
+    if (/^0x[a-f0-9]{40}$/.test(refLower)) {
+      validReferrer = refLower;
+    } else {
+      console.warn(`[verifyClaim] ⚠️ 无效的 referrer 地址格式: ${params.referrer}，使用默认值`);
+    }
+  } else {
+    console.debug(`[verifyClaim] referrer 为空或无效，使用默认值`);
+  }
 
   // idempotent: return existing claim if exists
   const { data: existing, error: exErr } = await supabase.from('claims').select('tx_hash,amount_wei,block_number,block_time').eq('tx_hash', txHash).maybeSingle();
@@ -202,29 +248,48 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     blockTimeIso = null;
   }
 
+  // ✅ 检查数据库函数是否存在（仅在第一次调用时检查，避免每次都检查）
+  const functionExists = await checkProcessClaimEnergyFunction();
+  if (!functionExists) {
+    const errorMsg = '数据库函数 process_claim_energy 不存在。请确保已执行数据库迁移脚本（db/fix_process_claim_energy_block_time.sql）';
+    console.error(`[verifyClaim] ❌ ${errorMsg}`);
+    throw new ApiError('CONFIG_ERROR', errorMsg, 500);
+  }
+
   // ✅ 使用数据库 RPC 函数进行原子操作，解决并发问题
-  console.log(`[verifyClaim] 开始处理交易: ${txHash}, 地址: ${address}, 金额: ${ethers.utils.formatEther(claimedAmountWei)} RAT`);
+  console.log(`[verifyClaim] 开始处理交易: ${txHash}, 地址: ${address}, 推荐人: ${validReferrer}, 金额: ${ethers.utils.formatEther(claimedAmountWei)} RAT`);
   
   const { data: rpcResult, error: rpcError } = await supabase.rpc('process_claim_energy', {
     p_tx_hash: txHash,
     p_address: address,
-    p_referrer: (params.referrer || '0x0000000000000000000000000000000000000000').toLowerCase(),
+    p_referrer: validReferrer,
     p_amount_wei: claimedAmountWei,
     p_block_number: receipt.blockNumber,
     p_block_time: blockTimeIso || new Date().toISOString()
   });
 
   if (rpcError) {
+    const errorMsg = rpcError.message || String(rpcError);
+    const errorCode = (rpcError as any)?.code;
+    
+    // ✅ 特殊处理：如果错误是函数不存在，提供更清晰的错误信息
+    if (errorMsg.toLowerCase().includes('function') && errorMsg.toLowerCase().includes('does not exist')) {
+      const detailedMsg = '数据库函数 process_claim_energy 不存在。请确保已执行数据库迁移脚本（db/fix_process_claim_energy_block_time.sql）';
+      console.error(`[verifyClaim] ❌ ${detailedMsg}`);
+      throw new ApiError('CONFIG_ERROR', detailedMsg, 500);
+    }
+    
     console.error('[verifyClaim] ❌ 数据库 RPC 调用失败:', {
       error: rpcError,
       txHash,
       address,
+      referrer: validReferrer,
       blockNumber: receipt.blockNumber,
-      message: rpcError.message || String(rpcError),
-      code: (rpcError as any)?.code,
+      message: errorMsg,
+      code: errorCode,
       details: (rpcError as any)?.details,
     });
-    throw new ApiError('INTERNAL_ERROR', `数据库处理失败: ${rpcError.message || String(rpcError)}`, 500);
+    throw new ApiError('INTERNAL_ERROR', `数据库处理失败: ${errorMsg}`, 500);
   }
 
   // RPC 函数已经处理了 claim 插入和能量计算
@@ -238,7 +303,7 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   }
 
   // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
-  await ensureUserRow(address, params.referrer);
+  await ensureUserRow(address, validReferrer);
 
   // ✅ 处理推荐奖励（如果有 ReferralReward 事件）
   if (referralRewardWei && referralRewardReferrer) {
