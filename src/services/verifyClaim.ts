@@ -136,6 +136,41 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     // Even if claim exists, still ensure user exists and energy awarded (idempotent).
     await ensureUserRow(address, params.referrer);
     await awardEnergyOnceForTx(address, txHash);
+    
+    // ✅ 修复：即使交易已存在，也要确保推荐人的 invite_count 正确
+    const ref = (params.referrer || '').toLowerCase();
+    if (ref && ref !== '0x0000000000000000000000000000000000000000') {
+      // 计算实际的邀请数量
+      const { data: actualInvites } = await supabase
+        .from('claims')
+        .select('address')
+        .eq('referrer', ref);
+      
+      const actualInviteCount = actualInvites ? new Set(actualInvites.map((c: any) => c.address.toLowerCase())).size : 0;
+      
+      // 更新推荐人的 invite_count（如果不同）
+      const { data: refData } = await supabase
+        .from('users')
+        .select('invite_count,energy_total,energy_locked,created_at')
+        .eq('address', ref)
+        .maybeSingle();
+      
+      if (refData && Number((refData as any)?.invite_count || 0) !== actualInviteCount) {
+        await supabase.from('users').upsert(
+          {
+            address: ref,
+            invite_count: actualInviteCount,
+            energy_total: Number((refData as any)?.energy_total || 0),
+            energy_locked: Number((refData as any)?.energy_locked || 0),
+            updated_at: new Date().toISOString(),
+            created_at: (refData as any)?.created_at || new Date().toISOString(),
+          },
+          { onConflict: 'address' }
+        );
+        console.log(`[verifyClaim] ✅ 修复推荐人 invite_count: ${ref}, ${(refData as any)?.invite_count} -> ${actualInviteCount}`);
+      }
+    }
+    
     return {
       ok: true,
       txHash,

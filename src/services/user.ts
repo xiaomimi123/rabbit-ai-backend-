@@ -27,7 +27,32 @@ export async function getUserInfo(address: string) {
     rawData: data,
   });
 
-  const inviteCount = Number((data as any)?.invite_count || 0);
+  // ✅ 修复：如果 invite_count 为 0，但实际有下级，自动修复
+  let inviteCount = Number((data as any)?.invite_count || 0);
+  if (inviteCount === 0) {
+    // 检查实际的下级数量
+    const { data: actualInvites } = await supabase
+      .from('claims')
+      .select('address')
+      .eq('referrer', addr);
+    
+    if (actualInvites && actualInvites.length > 0) {
+      const uniqueInvites = new Set(actualInvites.map((c: any) => c.address.toLowerCase()));
+      const actualCount = uniqueInvites.size;
+      
+      if (actualCount > 0) {
+        // 自动修复 invite_count
+        await supabase.from('users').update({
+          invite_count: actualCount,
+          updated_at: new Date().toISOString(),
+        }).eq('address', addr);
+        
+        inviteCount = actualCount;
+        console.log(`[getUserInfo] ✅ 自动修复 invite_count: ${addr}, 0 -> ${actualCount}`);
+      }
+    }
+  }
+
   const energyTotal = Number((data as any)?.energy_total || 0);
   const energyLocked = Number((data as any)?.energy_locked || 0);
   const energy = Math.max(0, energyTotal - energyLocked);
