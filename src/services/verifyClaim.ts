@@ -224,7 +224,7 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
       code: (rpcError as any)?.code,
       details: (rpcError as any)?.details,
     });
-    throw new ApiError('UNKNOWN', `数据库处理失败: ${rpcError.message || String(rpcError)}`, 500);
+    throw new ApiError('INTERNAL_ERROR', `数据库处理失败: ${rpcError.message || String(rpcError)}`, 500);
   }
 
   // RPC 函数已经处理了 claim 插入和能量计算
