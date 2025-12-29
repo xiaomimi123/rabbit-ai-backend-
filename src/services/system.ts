@@ -1,15 +1,46 @@
 import { supabase } from '../infra/supabase.js';
 
 export async function getSystemLinks() {
-  const { data, error } = await supabase
+  // 优先从 system_config 表读取 FRONTEND_* 配置（管理后台使用）
+  const { data: configData, error: configError } = await supabase
+    .from('system_config')
+    .select('key, value')
+    .in('key', ['FRONTEND_WHITEPAPER_URL', 'FRONTEND_AUDIT_REPORT_URL', 'FRONTEND_SUPPORT_URL']);
+
+  if (configError) throw configError;
+
+  const configLinks: Record<string, string> = {};
+  (configData || []).forEach((row: any) => {
+    const value = typeof row.value === 'string' ? row.value : JSON.stringify(row.value);
+    // 将 FRONTEND_* 键名映射为 system_links 的键名
+    if (row.key === 'FRONTEND_WHITEPAPER_URL') {
+      configLinks.whitepaper = value || '';
+    } else if (row.key === 'FRONTEND_AUDIT_REPORT_URL') {
+      configLinks.audits = value || '';
+    } else if (row.key === 'FRONTEND_SUPPORT_URL') {
+      configLinks.support = value || '';
+    }
+  });
+
+  // 如果 system_config 中有数据，直接返回
+  if (configData && configData.length > 0) {
+    return {
+      whitepaper: configLinks.whitepaper || '',
+      audits: configLinks.audits || '',
+      support: configLinks.support || '',
+    };
+  }
+
+  // 兼容旧数据：从 system_links 表读取（如果 system_config 中没有数据）
+  const { data: linksData, error: linksError } = await supabase
     .from('system_links')
     .select('key, url')
     .order('key', { ascending: true });
 
-  if (error) throw error;
+  if (linksError) throw linksError;
 
   const links: Record<string, string> = {};
-  (data || []).forEach((row: any) => {
+  (linksData || []).forEach((row: any) => {
     links[row.key] = row.url;
   });
 
