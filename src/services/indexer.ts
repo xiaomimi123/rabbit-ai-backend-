@@ -163,98 +163,26 @@ export async function manualIndexTransaction(
             
             const isFirstClaim = !existingClaims || existingClaims.length === 0;
             
-            // 插入 claim 记录
-            const { error: claimError } = await supabase.from('claims').insert({
-              tx_hash: txHash,
-              address: user,
-              referrer: referrer,
-              amount_wei: amountWei,
-              block_number: receipt.blockNumber,
-              block_time: blockTimeIso,
-              status: 'SUCCESS',
-              energy_awarded: true,
+            // ✅ 使用数据库 RPC 函数进行原子操作，解决并发问题
+            const { data: rpcResult, error: rpcError } = await supabase.rpc('process_claim_energy', {
+              p_tx_hash: txHash,
+              p_address: user,
+              p_referrer: referrer || '0x0000000000000000000000000000000000000000',
+              p_amount_wei: amountWei,
+              p_block_number: receipt.blockNumber,
+              p_block_time: blockTimeIso || new Date().toISOString()
             });
             
-            if (claimError) {
-              console.error(`[manualIndex] 插入 claim 失败:`, claimError);
-              results.push({ type: 'Claimed', status: 'error', error: claimError.message });
+            if (rpcError) {
+              console.error(`[manualIndex] RPC 调用失败:`, rpcError);
+              results.push({ type: 'Claimed', status: 'error', error: rpcError.message });
             } else {
-              console.log(`[manualIndex] ✅ 成功插入 claim 记录`);
-              results.push({ type: 'Claimed', status: 'inserted', txHash, user, amount: ethers.utils.formatEther(amountWei) });
-              
-              // 确保用户记录存在，并更新能量
-              const { data: userData } = await supabase
-                .from('users')
-                .select('energy_total,energy_locked,created_at')
-                .eq('address', user)
-                .maybeSingle();
-              
-              const currentEnergy = Number((userData as any)?.energy_total || 0);
-              const newEnergy = currentEnergy + 1; // 每次领取空投 +1 能量
-              
-              await ensureUserRow(user, referrer);
-              
-              // 更新用户能量
-              const { error: energyError } = await supabase.from('users').update({
-                energy_total: newEnergy,
-                updated_at: new Date().toISOString(),
-              }).eq('address', user);
-              
-              if (energyError) {
-                console.error(`[manualIndex] 更新用户能量失败:`, energyError);
+              if (rpcResult?.status === 'skipped') {
+                console.log(`[manualIndex] 交易已存在，跳过处理: ${txHash}`);
+                results.push({ type: 'Claimed', status: 'skipped', txHash, user, amount: ethers.utils.formatEther(amountWei) });
               } else {
-                console.log(`[manualIndex] ✅ 更新用户能量: ${currentEnergy} -> ${newEnergy}`);
-              }
-              
-              // 处理推荐人的能量奖励
-              const ref = lower(referrer);
-              if (ref && ref !== '0x0000000000000000000000000000000000000000') {
-                const { data: refData } = await supabase
-                  .from('users')
-                  .select('invite_count,energy_total,energy_locked,created_at')
-                  .eq('address', ref)
-                  .maybeSingle();
-                
-                let energyReward = 0;
-                let newInviteCount = Number((refData as any)?.invite_count || 0);
-                
-                // 1. 邀请奖励：如果是第一次领取，奖励 +2 能量
-                if (isFirstClaim) {
-                  newInviteCount += 1;
-                  energyReward += 2;
-                }
-                
-                // 2. 管道收益：每次下级领取空投，上级获得 +1 能量
-                energyReward += 1;
-                
-                if (refData) {
-                  const newEnergyTotal = Number((refData as any)?.energy_total || 0) + energyReward;
-                  await supabase.from('users').upsert(
-                    {
-                      address: ref,
-                      invite_count: newInviteCount,
-                      energy_total: newEnergyTotal,
-                      energy_locked: Number((refData as any)?.energy_locked || 0),
-                      updated_at: new Date().toISOString(),
-                      created_at: (refData as any)?.created_at || new Date().toISOString(),
-                    },
-                    { onConflict: 'address' }
-                  );
-                  console.log(`[manualIndex] ✅ 更新推荐人能量: ${ref}, +${energyReward} 能量`);
-                } else {
-                  await supabase.from('users').upsert(
-                    {
-                      address: ref,
-                      invite_count: newInviteCount > 0 ? newInviteCount : 1,
-                      energy_total: energyReward,
-                      energy_locked: 0,
-                      created_at: new Date().toISOString(),
-                      updated_at: new Date().toISOString(),
-                    },
-                    { onConflict: 'address' }
-                  );
-                  console.log(`[manualIndex] ✅ 创建推荐人记录: ${ref}, +${energyReward} 能量`);
-                }
+                console.log(`[manualIndex] ✅ 成功处理交易: ${txHash}, is_first_claim: ${rpcResult?.is_first_claim}`);
+                results.push({ type: 'Claimed', status: 'inserted', txHash, user, amount: ethers.utils.formatEther(amountWei) });
               }
             }
           }

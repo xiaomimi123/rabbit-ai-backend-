@@ -112,91 +112,31 @@ async function insertClaim(args: {
   blockNumber: number;
   blockTimeIso: string | null;
 }) {
-  // 先检查该 tx_hash 是否已经处理过（幂等性检查）
-  const { data: existingTx } = await supabase
-    .from('claims')
-    .select('tx_hash')
-    .eq('tx_hash', args.txHash)
-    .maybeSingle();
-  
-  const isNewTx = !existingTx;
-  
-  // 检查该被邀请人是否已经领取过（用于判断是否需要更新推荐人的 invite_count）
-  const { data: existingClaims } = await supabase
-    .from('claims')
-    .select('tx_hash')
-    .eq('address', lower(args.address))
-    .limit(1);
-  
-  const isFirstClaim = !existingClaims || existingClaims.length === 0;
+  // ✅ 使用数据库 RPC 函数进行原子操作，解决并发问题
+  const { data, error } = await supabase.rpc('process_claim_energy', {
+    p_tx_hash: args.txHash,
+    p_address: args.address,
+    p_referrer: args.referrer || '0x0000000000000000000000000000000000000000',
+    p_amount_wei: args.amountWei,
+    p_block_number: args.blockNumber,
+    p_block_time: args.blockTimeIso || new Date().toISOString()
+  });
 
-  const { error } = await supabase.from('claims').upsert(
-    {
-      tx_hash: args.txHash,
-      address: args.address,
-      referrer: args.referrer,
-      amount_wei: args.amountWei,
-      block_number: args.blockNumber,
-      block_time: args.blockTimeIso,
-      status: 'SUCCESS',
-      created_at: new Date().toISOString(),
-    },
-    { onConflict: 'tx_hash' }
-  );
-  if (error) throw error;
-
-  // ensure user exists (Admin Panel user count)
-  await ensureUserRow(args.address, args.referrer);
-
-  // 处理推荐人的能量奖励（仅对新交易处理，保证幂等性）
-  const ref = lower(args.referrer);
-  if (ref && ref !== '0x0000000000000000000000000000000000000000' && isNewTx) {
-    const { data: refData } = await supabase
-      .from('users')
-      .select('invite_count,energy_total,energy_locked,created_at')
-      .eq('address', ref)
-      .maybeSingle();
-    
-    let energyReward = 0;
-    let newInviteCount = Number((refData as any)?.invite_count || 0);
-    
-    // 1. 邀请奖励：如果是第一次领取，奖励 +2 能量
-    if (isFirstClaim) {
-      newInviteCount += 1;
-      energyReward += 2; // ✅ 邀请奖励：从 5 改为 2
-    }
-    
-    // 2. 管道收益：每次下级领取空投，上级获得 +1 能量
-    energyReward += 1; // ✅ 管道收益：+1 能量
-    
-    if (refData) {
-      const newEnergyTotal = Number((refData as any)?.energy_total || 0) + energyReward;
-      await supabase.from('users').upsert(
-        {
-          address: ref,
-          invite_count: newInviteCount,
-          energy_total: newEnergyTotal,
-          energy_locked: Number((refData as any)?.energy_locked || 0),
-          updated_at: new Date().toISOString(),
-          created_at: (refData as any)?.created_at || new Date().toISOString(),
-        },
-        { onConflict: 'address' }
-      );
-    } else {
-      // 推荐人不存在，创建记录并奖励能量
-      await supabase.from('users').upsert(
-        {
-          address: ref,
-          invite_count: newInviteCount > 0 ? newInviteCount : 1,
-          energy_total: energyReward,
-          energy_locked: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'address' }
-      );
-    }
+  if (error) {
+    console.error('[insertClaim] RPC 调用失败:', error);
+    throw error;
   }
+
+  // data 会返回 { status: 'success' | 'skipped', is_first_claim: boolean }
+  // 如果是 skipped，说明交易已存在，无需担心能量重复计算
+  if (data?.status === 'skipped') {
+    console.log(`[insertClaim] 交易已存在，跳过处理: ${args.txHash}`);
+  } else {
+    console.log(`[insertClaim] ✅ 成功处理交易: ${args.txHash}, is_first_claim: ${data?.is_first_claim}`);
+  }
+
+  // ensure user exists (Admin Panel user count) - 即使交易已存在也要确保用户记录存在
+  await ensureUserRow(args.address, args.referrer);
 }
 
 async function insertReferralReward(args: {
