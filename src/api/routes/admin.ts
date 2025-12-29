@@ -274,6 +274,49 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
   });
 
 
+  // GET /api/admin/indexer/status
+  // 获取 Indexer 同步状态
+  app.get('/api/admin/indexer/status', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const { supabase } = await import('../../infra/supabase.js');
+      const { config } = await import('../../config.js');
+      const provider = deps.getProvider();
+      
+      // 获取链上最新区块
+      const latestBlock = await provider.getBlockNumber();
+      const safeHead = Math.max(0, latestBlock - config.confirmations);
+      
+      // 获取数据库中的最后同步区块
+      const { data: syncState, error } = await supabase
+        .from('chain_sync_state')
+        .select('id,last_block,updated_at')
+        .eq('id', config.chainSyncId)
+        .maybeSingle();
+      
+      if (error) throw error;
+      
+      const lastSyncedBlock = syncState ? Number(syncState.last_block || 0) : 0;
+      const blocksBehind = Math.max(0, safeHead - lastSyncedBlock);
+      const isSyncing = blocksBehind > 0;
+      
+      return {
+        ok: true,
+        latestBlock,
+        safeHead,
+        lastSyncedBlock,
+        blocksBehind,
+        isSyncing,
+        confirmations: config.confirmations,
+        pollIntervalMs: config.pollIntervalMs,
+        lastUpdated: syncState?.updated_at || null,
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
   // POST /api/admin/indexer/manual-index
   // 手动索引单个交易（用于修复 Indexer 遗漏的交易）
   app.post('/api/admin/indexer/manual-index', async (req: FastifyRequest, reply: FastifyReply) => {

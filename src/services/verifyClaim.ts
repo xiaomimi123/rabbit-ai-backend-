@@ -203,6 +203,8 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   }
 
   // ✅ 使用数据库 RPC 函数进行原子操作，解决并发问题
+  console.log(`[verifyClaim] 开始处理交易: ${txHash}, 地址: ${address}, 金额: ${ethers.utils.formatEther(claimedAmountWei)} RAT`);
+  
   const { data: rpcResult, error: rpcError } = await supabase.rpc('process_claim_energy', {
     p_tx_hash: txHash,
     p_address: address,
@@ -213,16 +215,26 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   });
 
   if (rpcError) {
-    console.error('[verifyClaim] RPC 调用失败:', rpcError);
-    throw rpcError;
+    console.error('[verifyClaim] ❌ 数据库 RPC 调用失败:', {
+      error: rpcError,
+      txHash,
+      address,
+      blockNumber: receipt.blockNumber,
+      message: rpcError.message || String(rpcError),
+      code: (rpcError as any)?.code,
+      details: (rpcError as any)?.details,
+    });
+    throw new ApiError('DATABASE_ERROR', `数据库处理失败: ${rpcError.message || String(rpcError)}`, 500);
   }
 
   // RPC 函数已经处理了 claim 插入和能量计算
   // data 会返回 { status: 'success' | 'skipped', is_first_claim: boolean }
   if (rpcResult?.status === 'skipped') {
-    console.log(`[verifyClaim] 交易已存在，跳过处理: ${txHash}`);
+    console.log(`[verifyClaim] ⚠️ 交易已存在，跳过处理: ${txHash}`);
+  } else if (rpcResult?.status === 'success') {
+    console.log(`[verifyClaim] ✅ 成功处理交易: ${txHash}, 地址: ${address}, 是否首次领取: ${rpcResult?.is_first_claim}`);
   } else {
-    console.log(`[verifyClaim] ✅ 成功处理交易: ${txHash}, is_first_claim: ${rpcResult?.is_first_claim}`);
+    console.warn(`[verifyClaim] ⚠️ 未知的 RPC 返回状态:`, rpcResult);
   }
 
   // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
