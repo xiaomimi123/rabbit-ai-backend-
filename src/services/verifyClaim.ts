@@ -137,9 +137,18 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     await ensureUserRow(address, params.referrer);
     await awardEnergyOnceForTx(address, txHash);
     
-    // ✅ 修复：即使交易已存在，也要确保推荐人的 invite_count 正确
+    // ✅ 修复：即使交易已存在，也要确保推荐人的 invite_count 和能量奖励正确
     const ref = (params.referrer || '').toLowerCase();
     if (ref && ref !== '0x0000000000000000000000000000000000000000') {
+      // 检查该被邀请人是否已经领取过（用于判断是否是首次邀请）
+      const { data: existingClaims } = await supabase
+        .from('claims')
+        .select('tx_hash')
+        .eq('address', address)
+        .limit(1);
+      
+      const isFirstClaim = !existingClaims || existingClaims.length === 0;
+      
       // 计算实际的邀请数量
       const { data: actualInvites } = await supabase
         .from('claims')
@@ -148,26 +157,70 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
       
       const actualInviteCount = actualInvites ? new Set(actualInvites.map((c: any) => c.address.toLowerCase())).size : 0;
       
-      // 更新推荐人的 invite_count（如果不同）
+      // 更新推荐人的 invite_count 和能量（如果不同）
       const { data: refData } = await supabase
         .from('users')
         .select('invite_count,energy_total,energy_locked,created_at')
         .eq('address', ref)
         .maybeSingle();
       
-      if (refData && Number((refData as any)?.invite_count || 0) !== actualInviteCount) {
-        await supabase.from('users').upsert(
-          {
-            address: ref,
-            invite_count: actualInviteCount,
-            energy_total: Number((refData as any)?.energy_total || 0),
-            energy_locked: Number((refData as any)?.energy_locked || 0),
-            updated_at: new Date().toISOString(),
-            created_at: (refData as any)?.created_at || new Date().toISOString(),
-          },
-          { onConflict: 'address' }
-        );
-        console.log(`[verifyClaim] ✅ 修复推荐人 invite_count: ${ref}, ${(refData as any)?.invite_count} -> ${actualInviteCount}`);
+      if (refData) {
+        const currentInviteCount = Number((refData as any)?.invite_count || 0);
+        const currentEnergy = Number((refData as any)?.energy_total || 0);
+        
+        // 计算应该有的能量：如果 invite_count 不同，需要重新计算能量
+        let newEnergy = currentEnergy;
+        if (currentInviteCount !== actualInviteCount) {
+          // 重新计算能量：每个首次邀请 +2，每次下级领取 +1
+          // 这里我们需要从 claims 表重新计算
+          const { data: allInviteeClaims } = await supabase
+            .from('claims')
+            .select('address,created_at')
+            .eq('referrer', ref)
+            .order('created_at', { ascending: true });
+          
+          if (allInviteeClaims) {
+            const inviteeSet = new Set<string>();
+            let calculatedEnergy = 0;
+            
+            for (const claim of allInviteeClaims) {
+              const inviteeAddr = (claim as any).address.toLowerCase();
+              const isFirst = !inviteeSet.has(inviteeAddr);
+              
+              if (isFirst) {
+                inviteeSet.add(inviteeAddr);
+                calculatedEnergy += 2; // 首次邀请奖励
+              }
+              calculatedEnergy += 1; // 管道收益
+            }
+            
+            // 还需要加上用户自己领取空投的能量
+            const { data: userClaims } = await supabase
+              .from('claims')
+              .select('tx_hash')
+              .eq('address', ref);
+            
+            const userClaimCount = userClaims ? userClaims.length : 0;
+            calculatedEnergy += userClaimCount; // 用户自己领取的能量
+            
+            newEnergy = calculatedEnergy;
+          }
+        }
+        
+        if (currentInviteCount !== actualInviteCount || currentEnergy !== newEnergy) {
+          await supabase.from('users').upsert(
+            {
+              address: ref,
+              invite_count: actualInviteCount,
+              energy_total: newEnergy,
+              energy_locked: Number((refData as any)?.energy_locked || 0),
+              updated_at: new Date().toISOString(),
+              created_at: (refData as any)?.created_at || new Date().toISOString(),
+            },
+            { onConflict: 'address' }
+          );
+          console.log(`[verifyClaim] ✅ 修复推荐人数据: ${ref}, invite_count: ${currentInviteCount} -> ${actualInviteCount}, energy: ${currentEnergy} -> ${newEnergy}`);
+        }
       }
     }
     
