@@ -159,7 +159,7 @@ async function updateUserBalances(
 export async function rejectWithdrawal(withdrawalId: string) {
   const { data: w, error: wErr } = await supabase
     .from('withdrawals')
-    .select('id,address,amount,status')
+    .select('id,address,amount,status,energy_locked_amount')
     .eq('id', withdrawalId)
     .maybeSingle();
   if (wErr) throw wErr;
@@ -171,10 +171,13 @@ export async function rejectWithdrawal(withdrawalId: string) {
 
   const addr = lower((w as any).address);
   const amount = Number((w as any).amount || 0);
+  const energyLockedAmount = Number((w as any).energy_locked_amount || 0);
 
   // unlock energy + unlock usdt (do not reduce totals)
+  // ✅ 修复：使用 energy_locked_amount 而不是 amount 来解锁能量
+  // 因为 1 USDT = 10 Energy，所以解锁能量应该使用实际锁定的能量值
   const u = await getUserEnergyRow(addr);
-  const nextEnergyLocked = Math.max(0, u.energyLocked - amount);
+  const nextEnergyLocked = Math.max(0, u.energyLocked - energyLockedAmount);
   const nextUsdtLocked = Math.max(0, u.usdtLocked - amount);
   await updateUserBalances(
     addr,
@@ -210,7 +213,7 @@ export async function completeWithdrawal(params: {
 
   const { data: w, error: wErr } = await supabase
     .from('withdrawals')
-    .select('id,address,amount,status,payout_tx_hash')
+    .select('id,address,amount,status,payout_tx_hash,energy_locked_amount')
     .eq('id', params.withdrawalId)
     .maybeSingle();
   if (wErr) throw wErr;
@@ -235,6 +238,7 @@ export async function completeWithdrawal(params: {
 
   const userAddr = lower((w as any).address);
   const amount = String((w as any).amount);
+  const energyLockedAmount = Number((w as any).energy_locked_amount || 0);
 
   // Verify payout tx on-chain: USDT Transfer(any -> user, value == amount)
   // 注意：允许从任何地址转出（支持 MetaMask 手动发放），只验证接收方和金额
@@ -267,11 +271,13 @@ export async function completeWithdrawal(params: {
   if (!matched) throw new ApiError('INVALID_PAYOUT', 'USDT Transfer not matched (to/value)', 400);
 
   // Update DB: withdrawal completed + adjust energy + adjust usdt
+  // ✅ 修复：使用 energy_locked_amount 而不是 amount 来扣除能量
+  // 因为 1 USDT = 10 Energy，所以扣除能量应该使用实际锁定的能量值
   const u = await getUserEnergyRow(userAddr);
   const amtNum = Number(amount);
 
-  const nextEnergyLocked = Math.max(0, u.energyLocked - amtNum);
-  const nextEnergyTotal = Math.max(0, u.energyTotal - amtNum);
+  const nextEnergyLocked = Math.max(0, u.energyLocked - energyLockedAmount);
+  const nextEnergyTotal = Math.max(0, u.energyTotal - energyLockedAmount);
   const nextUsdtLocked = Math.max(0, u.usdtLocked - amtNum);
   const nextUsdtTotal = Math.max(0, u.usdtTotal - amtNum);
 
