@@ -158,6 +158,9 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
 
   const iface = new ethers.utils.Interface(AIRDROP_ABI);
   let claimedAmountWei: string | null = null;
+  let referralRewardWei: string | null = null;
+  let referralRewardReferrer: string | null = null;
+  
   for (const log of receipt.logs) {
     if (!log.address || log.address.toLowerCase() !== expectedTo) continue;
     try {
@@ -166,8 +169,12 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
         const user = String(parsed.args.user).toLowerCase();
         if (user === address) {
           claimedAmountWei = (parsed.args.amount as ethers.BigNumber).toString();
-          break;
         }
+      }
+      if (parsed.name === 'ReferralReward') {
+        const referrer = String(parsed.args.referrer).toLowerCase();
+        referralRewardWei = (parsed.args.amount as ethers.BigNumber).toString();
+        referralRewardReferrer = referrer;
       }
     } catch {
       // ignore
@@ -207,6 +214,88 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   // 能量累积：每次成功领取空投 +1（幂等，不会重复加也不会漏加）
   await awardEnergyOnceForTx(address, txHash);
 
+  // ✅ 处理推荐奖励（如果有 ReferralReward 事件）
+  if (referralRewardWei && referralRewardReferrer) {
+    const refAddr = referralRewardReferrer.toLowerCase();
+    const { error: refRewardErr } = await supabase.from('referral_rewards').upsert(
+      {
+        tx_hash: txHash,
+        referrer_address: refAddr,
+        amount_wei: referralRewardWei,
+        block_number: receipt.blockNumber,
+        block_time: blockTimeIso,
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: 'tx_hash' }
+    );
+    if (refRewardErr) {
+      console.error('[verifyClaim] 插入推荐奖励失败:', refRewardErr);
+      // 不抛出错误，因为主要功能（claim）已经成功
+    } else {
+      console.log('[verifyClaim] ✅ 成功插入推荐奖励记录');
+    }
+  }
+
+  // ✅ 处理推荐人的能量奖励（与 Indexer 逻辑一致）
+  const ref = (params.referrer || '').toLowerCase();
+  if (ref && ref !== '0x0000000000000000000000000000000000000000') {
+    // 检查该被邀请人是否已经领取过
+    const { data: existingClaims } = await supabase
+      .from('claims')
+      .select('tx_hash')
+      .eq('address', address)
+      .limit(1);
+    
+    const isFirstClaim = !existingClaims || existingClaims.length === 0;
+    
+    const { data: refData } = await supabase
+      .from('users')
+      .select('invite_count,energy_total,energy_locked,created_at')
+      .eq('address', ref)
+      .maybeSingle();
+    
+    let energyReward = 0;
+    let newInviteCount = Number((refData as any)?.invite_count || 0);
+    
+    // 1. 邀请奖励：如果是第一次领取，奖励 +2 能量
+    if (isFirstClaim) {
+      newInviteCount += 1;
+      energyReward += 2;
+    }
+    
+    // 2. 管道收益：每次下级领取空投，上级获得 +1 能量
+    energyReward += 1;
+    
+    if (refData) {
+      const newEnergyTotal = Number((refData as any)?.energy_total || 0) + energyReward;
+      await supabase.from('users').upsert(
+        {
+          address: ref,
+          invite_count: newInviteCount,
+          energy_total: newEnergyTotal,
+          energy_locked: Number((refData as any)?.energy_locked || 0),
+          updated_at: new Date().toISOString(),
+          created_at: (refData as any)?.created_at || new Date().toISOString(),
+        },
+        { onConflict: 'address' }
+      );
+      console.log(`[verifyClaim] ✅ 更新推荐人能量: ${ref}, +${energyReward} 能量`);
+    } else {
+      await supabase.from('users').upsert(
+        {
+          address: ref,
+          invite_count: newInviteCount > 0 ? newInviteCount : 1,
+          energy_total: energyReward,
+          energy_locked: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'address' }
+      );
+      console.log(`[verifyClaim] ✅ 创建推荐人记录: ${ref}, +${energyReward} 能量`);
+    }
+  }
+
   return {
     ok: true,
     txHash,
@@ -214,6 +303,7 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     unit: 'RAT',
     blockNumber: receipt.blockNumber,
     blockTime: blockTimeIso,
+    attempt: 1, // 标记为第一次尝试（用于前端显示）
   };
 }
 
