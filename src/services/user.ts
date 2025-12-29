@@ -4,13 +4,28 @@ import { supabase } from '../infra/supabase.js';
 export async function getUserInfo(address: string) {
   const addr = address.toLowerCase();
 
+  console.log('[getUserInfo] 查询用户信息:', {
+    originalAddress: address,
+    normalizedAddress: addr,
+    queryAddress: addr,
+  });
+
   const { data, error } = await supabase
     .from('users')
     .select('address,invite_count,referrer_address,energy_total,energy_locked,usdt_total,usdt_locked,updated_at')
     .eq('address', addr)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    console.error('[getUserInfo] 数据库查询错误:', error);
+    throw error;
+  }
+
+  console.log('[getUserInfo] 数据库查询结果:', {
+    found: data !== null,
+    data: data ? JSON.stringify(data, null, 2) : 'null',
+    rawData: data,
+  });
 
   const inviteCount = Number((data as any)?.invite_count || 0);
   const energyTotal = Number((data as any)?.energy_total || 0);
@@ -21,7 +36,7 @@ export async function getUserInfo(address: string) {
   const usdtLocked = Number((data as any)?.usdt_locked || 0);
   const usdtAvailable = Math.max(0, usdtTotal - usdtLocked);
 
-  return {
+  const result = {
     address: addr,
     energy,
     energyTotal,
@@ -34,10 +49,20 @@ export async function getUserInfo(address: string) {
     referrer: (data as any)?.referrer_address || '0x0000000000000000000000000000000000000000',
     updatedAt: (data as any)?.updated_at || new Date().toISOString(),
   };
+
+  console.log('[getUserInfo] 返回结果:', JSON.stringify(result, null, 2));
+
+  return result;
 }
 
 export async function getTeamRewards(address: string) {
   const addr = address.toLowerCase();
+
+  console.log('[getTeamRewards] 查询团队奖励:', {
+    originalAddress: address,
+    normalizedAddress: addr,
+    queryAddress: addr,
+  });
 
   const { data, error } = await supabase
     .from('referral_rewards')
@@ -46,9 +71,15 @@ export async function getTeamRewards(address: string) {
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[getTeamRewards] Database error:', error);
+    console.error('[getTeamRewards] 数据库查询错误:', error);
     throw error;
   }
+
+  console.log('[getTeamRewards] 数据库查询结果:', {
+    recordCount: data?.length || 0,
+    records: data ? JSON.stringify(data, null, 2) : '[]',
+    rawData: data,
+  });
 
   const totalWei = (data || []).reduce((acc: bigint, row: any) => {
     try {
@@ -72,17 +103,15 @@ export async function getTeamRewards(address: string) {
   
   const totalRewards = ethers.utils.formatEther(totalWei.toString());
 
-  console.log('[getTeamRewards] Calculated team rewards:', {
-    address: addr,
-    recordCount: data?.length || 0,
-    totalRewards,
-  });
-
-  return {
+  const result = {
     totalRewards,
     unit: 'RAT',
     updatedAt: new Date().toISOString(),
   };
+
+  console.log('[getTeamRewards] 返回结果:', JSON.stringify(result, null, 2));
+
+  return result;
 }
 
 /**
