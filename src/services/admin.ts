@@ -205,9 +205,7 @@ export async function completeWithdrawal(params: {
   payoutTxHash: string;
 }) {
   const usdtAddr = await getUsdtContract();
-  const adminPayout = await getAdminPayoutAddress();
   if (!usdtAddr) throw new ApiError('CONFIG_ERROR', 'USDT_CONTRACT is not configured (env or system_config.usdt)', 400);
-  if (!adminPayout) throw new ApiError('CONFIG_ERROR', 'ADMIN_PAYOUT_ADDRESS is not configured (env or system_config.admin_payout)', 400);
 
   const { data: w, error: wErr } = await supabase
     .from('withdrawals')
@@ -237,7 +235,8 @@ export async function completeWithdrawal(params: {
   const userAddr = lower((w as any).address);
   const amount = String((w as any).amount);
 
-  // Verify payout tx on-chain: USDT Transfer(admin -> user, value == amount)
+  // Verify payout tx on-chain: USDT Transfer(any -> user, value == amount)
+  // 注意：允许从任何地址转出（支持 MetaMask 手动发放），只验证接收方和金额
   const usdt = new ethers.Contract(usdtAddr, ERC20_ABI, params.provider);
   const decimals = Number(await usdt.decimals());
   const expectedValue = ethers.utils.parseUnits(amount, decimals);
@@ -253,10 +252,10 @@ export async function completeWithdrawal(params: {
     try {
       const parsed = iface.parseLog(log);
       if (parsed.name !== 'Transfer') continue;
-      const from = lower(parsed.args.from);
       const to = lower(parsed.args.to);
       const value = parsed.args.value as ethers.BigNumber;
-      if (from === lower(adminPayout) && to === userAddr && value.eq(expectedValue)) {
+      // 只验证接收方和金额，不验证发送方（允许从任何地址转出）
+      if (to === userAddr && value.eq(expectedValue)) {
         matched = true;
         break;
       }
@@ -264,7 +263,7 @@ export async function completeWithdrawal(params: {
       // ignore
     }
   }
-  if (!matched) throw new ApiError('INVALID_PAYOUT', 'USDT Transfer not matched (from/to/value)', 400);
+  if (!matched) throw new ApiError('INVALID_PAYOUT', 'USDT Transfer not matched (to/value)', 400);
 
   // Update DB: withdrawal completed + adjust energy + adjust usdt
   const u = await getUserEnergyRow(userAddr);
