@@ -300,6 +300,31 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
       return reply.status(400).send(err);
     }
   });
+
+  // POST /api/admin/indexer/manual-index
+  // 手动索引单个交易（用于修复 Indexer 遗漏的交易）
+  app.post('/api/admin/indexer/manual-index', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const body = req.body as { txHash: string };
+      if (!body.txHash || typeof body.txHash !== 'string') {
+        return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: 'Missing or invalid txHash' });
+      }
+      
+      const { manualIndexTransaction } = await import('../../services/indexer.js');
+      const provider = deps.getProvider();
+      const result = await manualIndexTransaction(provider, body.txHash);
+      
+      if (result.success) {
+        return { ok: true, ...result };
+      } else {
+        return reply.status(400).send({ ok: false, code: 'INDEX_FAILED', message: result.message, details: result.details });
+      }
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
 }
 
 
