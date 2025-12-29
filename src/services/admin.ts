@@ -736,4 +736,214 @@ export async function getFinanceExpenses(page: number, pageSize: number) {
   };
 }
 
+/**
+ * 获取操作记录（提现和空投领取）
+ */
+export async function getAdminOperations(params: {
+  limit?: number;
+  offset?: number;
+  type?: 'all' | 'Withdrawal' | 'AirdropClaim';
+  address?: string;
+}) {
+  const limit = params.limit || 100;
+  const offset = params.offset || 0;
+  const type = params.type || 'all';
+  const address = params.address ? lower(params.address) : null;
+
+  // 合并 withdrawals 和 claims 表的数据
+  const operations: any[] = [];
+
+  // 1. 获取提现记录
+  if (type === 'all' || type === 'Withdrawal') {
+    let withdrawalsQuery = supabase
+      .from('withdrawals')
+      .select('id,address,amount,status,payout_tx_hash,created_at,updated_at')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (address) {
+      withdrawalsQuery = withdrawalsQuery.eq('address', address);
+    }
+
+    const { data: withdrawals, error: wErr } = await withdrawalsQuery;
+    if (wErr) throw wErr;
+
+    (withdrawals || []).forEach((w: any) => {
+      operations.push({
+        id: w.id,
+        address: w.address,
+        type: 'Withdrawal',
+        amount: String(w.amount),
+        status: w.status === 'Completed' ? 'Success' : w.status === 'Rejected' ? 'Rejected' : 'Pending',
+        timestamp: w.updated_at || w.created_at,
+        txHash: w.payout_tx_hash || undefined,
+      });
+    });
+  }
+
+  // 2. 获取空投领取记录
+  if (type === 'all' || type === 'AirdropClaim') {
+    let claimsQuery = supabase
+      .from('claims')
+      .select('tx_hash,address,amount_wei,created_at')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (address) {
+      claimsQuery = claimsQuery.eq('address', address);
+    }
+
+    const { data: claims, error: cErr } = await claimsQuery;
+    if (cErr) throw cErr;
+
+    (claims || []).forEach((c: any) => {
+      operations.push({
+        id: c.tx_hash,
+        address: c.address,
+        type: 'AirdropClaim',
+        amount: ethers.utils.formatEther(c.amount_wei || '0'),
+        status: 'Success',
+        timestamp: c.created_at,
+        txHash: c.tx_hash,
+      });
+    });
+  }
+
+  // 按时间戳排序（最新的在前）
+  operations.sort((a, b) => {
+    return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+  });
+
+  // 获取总数
+  let totalCount = 0;
+  if (type === 'all') {
+    const { count: wCount } = await supabase
+      .from('withdrawals')
+      .select('*', { count: 'exact', head: true });
+    const { count: cCount } = await supabase
+      .from('claims')
+      .select('*', { count: 'exact', head: true });
+    totalCount = (wCount || 0) + (cCount || 0);
+  } else if (type === 'Withdrawal') {
+    const { count } = await supabase
+      .from('withdrawals')
+      .select('*', { count: 'exact', head: true });
+    totalCount = count || 0;
+  } else if (type === 'AirdropClaim') {
+    const { count } = await supabase
+      .from('claims')
+      .select('*', { count: 'exact', head: true });
+    totalCount = count || 0;
+  }
+
+  return {
+    ok: true,
+    items: operations.slice(0, limit),
+    total: totalCount,
+  };
+}
+
+/**
+ * 获取收益明细（支持日期范围）
+ */
+export async function getAdminRevenueWithDateRange(
+  provider: ethers.providers.Provider,
+  params: {
+    limit?: number;
+    offset?: number;
+    startDate?: string;
+    endDate?: string;
+  }
+) {
+  const limit = params.limit || 100;
+  const offset = params.offset || 0;
+
+  // 从链上读取 claimFee
+  const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
+  const claimFeeWei = await airdrop.claimFee();
+  const claimFee = ethers.utils.formatEther(claimFeeWei);
+
+  // 构建查询
+  let query = supabase
+    .from('claims')
+    .select('tx_hash,address,created_at', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  // 应用日期过滤
+  if (params.startDate) {
+    query = query.gte('created_at', params.startDate);
+  }
+  if (params.endDate) {
+    query = query.lte('created_at', params.endDate);
+  }
+
+  const { data, count, error } = await query;
+  if (error) throw error;
+
+  // 计算总收入
+  const totalRevenue = Number(claimFee) * (count || 0);
+
+  return {
+    ok: true,
+    items: (data || []).map((r: any) => ({
+      id: r.tx_hash,
+      address: r.address,
+      feeAmount: Number(claimFee),
+      asset: 'BNB' as const,
+      timestamp: r.created_at,
+      txHash: r.tx_hash,
+    })),
+    total: totalRevenue,
+  };
+}
+
+/**
+ * 获取支出明细（支持日期范围）
+ */
+export async function getAdminExpensesWithDateRange(params: {
+  limit?: number;
+  offset?: number;
+  startDate?: string;
+  endDate?: string;
+}) {
+  const limit = params.limit || 100;
+  const offset = params.offset || 0;
+
+  // 构建查询
+  let query = supabase
+    .from('withdrawals')
+    .select('id,address,amount,payout_tx_hash,created_at,updated_at', { count: 'exact' })
+    .eq('status', 'Completed')
+    .order('updated_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  // 应用日期过滤
+  if (params.startDate) {
+    query = query.gte('updated_at', params.startDate);
+  }
+  if (params.endDate) {
+    query = query.lte('updated_at', params.endDate);
+  }
+
+  const { data, count, error } = await query;
+  if (error) throw error;
+
+  // 计算总支出
+  const totalExpense = (data || []).reduce((sum: number, r: any) => sum + Number(r.amount || 0), 0);
+
+  return {
+    ok: true,
+    items: (data || []).map((r: any) => ({
+      id: r.id,
+      address: r.address,
+      amount: Number(r.amount),
+      status: 'Completed',
+      createdAt: r.created_at,
+      payoutTxHash: r.payout_tx_hash,
+    })),
+    total: totalExpense,
+  };
+}
+
 

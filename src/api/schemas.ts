@@ -85,4 +85,27 @@ export const AdminUpdateAnnouncementBodySchema = z.object({
   content: z.string().min(1, '公告内容不能为空').max(5000, '公告内容不能超过 5000 字符'),
 });
 
+// 操作记录查询参数
+export const AdminOperationsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+  type: z.enum(['all', 'Withdrawal', 'AirdropClaim']).optional().default('all'),
+  address: AddressSchema.optional(),
+});
+
+// Revenue/Expenses 查询参数（支持日期范围）
+export const AdminRevenueQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+export const AdminExpensesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
 

@@ -13,6 +13,9 @@ import {
   AdminFinanceQuerySchema,
   AdminUserListQuerySchema,
   AdminUpdateAnnouncementBodySchema,
+  AdminOperationsQuerySchema,
+  AdminRevenueQuerySchema,
+  AdminExpensesQuerySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -34,6 +37,9 @@ import {
   getTopRATHolders,
   getAdminUsdtBalance,
   getRevenueStats,
+  getAdminOperations,
+  getAdminRevenueWithDateRange,
+  getAdminExpensesWithDateRange,
 } from '../../services/admin.js';
 import { getSystemAnnouncement, updateSystemAnnouncement } from '../../services/system.js';
 
@@ -320,6 +326,45 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
       } else {
         return reply.status(400).send({ ok: false, code: 'INDEX_FAILED', message: result.message, details: result.details });
       }
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/revenue - 获取收益明细（支持日期范围）
+  app.get('/api/admin/revenue', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminRevenueQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await getAdminRevenueWithDateRange(deps.getProvider(), parsed.data);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/expenses - 获取支出明细（支持日期范围）
+  app.get('/api/admin/expenses', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminExpensesQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await getAdminExpensesWithDateRange(parsed.data);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/operations - 获取操作记录（提现和空投领取）
+  app.get('/api/admin/operations', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminOperationsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await getAdminOperations(parsed.data);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
