@@ -206,6 +206,7 @@ export async function completeWithdrawal(params: {
 }) {
   const usdtAddr = await getUsdtContract();
   if (!usdtAddr) throw new ApiError('CONFIG_ERROR', 'USDT_CONTRACT is not configured (env or system_config.usdt)', 400);
+  // 注意：不再要求 admin_payout 配置，支持从任何地址手动发放（MetaMask 模式）
 
   const { data: w, error: wErr } = await supabase
     .from('withdrawals')
