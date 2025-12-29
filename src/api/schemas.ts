@@ -104,4 +104,18 @@ export const AdminExpensesQuerySchema = z.object({
   endDate: z.string().optional(),
 });
 
+// 通知相关 Schema
+export const AdminSendNotificationBodySchema = z.object({
+  address: AddressSchema,
+  title: z.string().min(1).max(200),
+  content: z.string().min(1).max(2000),
+  type: z.enum(['SYSTEM', 'REWARD', 'NETWORK']).optional().default('SYSTEM'),
+});
+
+export const AdminBroadcastNotificationBodySchema = z.object({
+  title: z.string().min(1).max(200),
+  content: z.string().min(1).max(2000),
+  type: z.enum(['SYSTEM', 'REWARD', 'NETWORK']).optional().default('SYSTEM'),
+});
+
 

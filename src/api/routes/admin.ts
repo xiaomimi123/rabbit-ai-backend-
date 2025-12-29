@@ -15,6 +15,8 @@ import {
   AdminOperationsQuerySchema,
   AdminRevenueQuerySchema,
   AdminExpensesQuerySchema,
+  AdminSendNotificationBodySchema,
+  AdminBroadcastNotificationBodySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -40,6 +42,7 @@ import {
   getAdminRevenueWithDateRange,
   getAdminExpensesWithDateRange,
 } from '../../services/admin.js';
+import { sendUserNotification, broadcastNotification } from '../../services/notifications.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: () => ethers.providers.Provider }) {
   app.get('/api/admin/kpis', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -329,6 +332,32 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
       return await getAdminOperations(parsed.data);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // POST /api/admin/notifications/send - 发送个人通知
+  app.post('/api/admin/notifications/send', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const body = AdminSendNotificationBodySchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
+    try {
+      return await sendUserNotification(body.data);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // POST /api/admin/notifications/broadcast - 广播通知给所有用户
+  app.post('/api/admin/notifications/broadcast', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const body = AdminBroadcastNotificationBodySchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
+    try {
+      return await broadcastNotification(body.data);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

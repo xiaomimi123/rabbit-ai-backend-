@@ -50,3 +50,70 @@ export async function markAllNotificationsAsRead(address: string) {
   return { ok: true };
 }
 
+// 发送个人通知（管理员功能）
+export async function sendUserNotification(params: {
+  address: string;
+  title: string;
+  content: string;
+  type?: 'SYSTEM' | 'REWARD' | 'NETWORK';
+}) {
+  const addr = params.address.toLowerCase();
+  const now = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from('notifications')
+    .insert({
+      address: addr,
+      type: params.type || 'SYSTEM',
+      title: params.title,
+      content: params.content,
+      read: false,
+      created_at: now,
+      updated_at: now,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  return { ok: true, notification: data };
+}
+
+// 广播通知给所有用户（管理员功能）
+export async function broadcastNotification(params: {
+  title: string;
+  content: string;
+  type?: 'SYSTEM' | 'REWARD' | 'NETWORK';
+}) {
+  // 获取所有用户地址
+  const { data: users, error: usersError } = await supabase
+    .from('users')
+    .select('address');
+
+  if (usersError) throw usersError;
+
+  if (!users || users.length === 0) {
+    return { ok: true, sent: 0 };
+  }
+
+  const now = new Date().toISOString();
+  const notifications = users.map((user: any) => ({
+    address: (user.address as string).toLowerCase(),
+    type: params.type || 'SYSTEM',
+    title: params.title,
+    content: params.content,
+    read: false,
+    created_at: now,
+    updated_at: now,
+  }));
+
+  // 批量插入通知
+  const { error: insertError } = await supabase
+    .from('notifications')
+    .insert(notifications);
+
+  if (insertError) throw insertError;
+
+  return { ok: true, sent: notifications.length };
+}
+
