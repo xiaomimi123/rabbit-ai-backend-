@@ -152,7 +152,7 @@ async function insertReferralReward(args: {
       referrer_address: args.referrer,
       amount_wei: args.amountWei,
       block_number: args.blockNumber,
-      block_time: args.blockTimeIso,
+      block_time: args.blockTimeIso || new Date().toISOString(), // ✅ 确保 block_time 不为 null
       created_at: new Date().toISOString(),
     },
     { onConflict: 'tx_hash' }
@@ -168,7 +168,7 @@ async function handleCooldownReset(args: { txHash: string; referrer: string; blo
     tx_hash: args.txHash,
     referrer_address: args.referrer,
     block_number: args.blockNumber,
-    block_time: args.blockTimeIso,
+    block_time: args.blockTimeIso || new Date().toISOString(), // ✅ 确保 block_time 不为 null
     created_at: new Date().toISOString(),
   });
 

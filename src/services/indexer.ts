@@ -219,7 +219,7 @@ export async function manualIndexTransaction(
               referrer_address: referrer,
               amount_wei: amountWei,
               block_number: receipt.blockNumber,
-              block_time: blockTimeIso,
+              block_time: blockTimeIso || new Date().toISOString(), // ✅ 确保 block_time 不为 null
             });
             
             if (rewardError) {

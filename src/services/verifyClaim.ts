@@ -237,7 +237,7 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
         referrer_address: refAddr,
         amount_wei: referralRewardWei,
         block_number: receipt.blockNumber,
-        block_time: blockTimeIso,
+        block_time: blockTimeIso || new Date().toISOString(), // ✅ 确保 block_time 不为 null
         created_at: new Date().toISOString(),
       },
       { onConflict: 'tx_hash' }
@@ -258,7 +258,7 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
         tx_hash: txHash,
         referrer_address: refAddr,
         block_number: receipt.blockNumber,
-        block_time: blockTimeIso,
+        block_time: blockTimeIso || new Date().toISOString(), // ✅ 确保 block_time 不为 null
         created_at: new Date().toISOString(),
       },
       { onConflict: 'tx_hash' }
