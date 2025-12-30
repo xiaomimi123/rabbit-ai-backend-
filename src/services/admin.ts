@@ -482,6 +482,88 @@ export async function adminListRecentClaims(limit: number) {
 }
 
 /**
+ * 获取用户团队关系（上级、下级）
+ * 用于管理后台团队关系查询页面
+ */
+export async function adminGetUserTeam(address: string) {
+  const addr = lower(address);
+
+  // 1. 查询目标用户信息
+  const { data: targetUser, error: targetErr } = await supabase
+    .from('users')
+    .select('address,energy_total,invite_count,created_at')
+    .eq('address', addr)
+    .maybeSingle();
+
+  if (targetErr) throw targetErr;
+  if (!targetUser) {
+    throw new ApiError('NOT_FOUND', 'User not found', 404);
+  }
+
+  const target = {
+    address: (targetUser as any).address,
+    energyTotal: String((targetUser as any).energy_total || 0),
+    inviteCount: String((targetUser as any).invite_count || 0),
+    registeredAt: (targetUser as any).created_at,
+  };
+
+  // 2. 查询上级（推荐人）
+  const { data: userRow, error: userErr } = await supabase
+    .from('users')
+    .select('referrer_address')
+    .eq('address', addr)
+    .maybeSingle();
+
+  if (userErr) throw userErr;
+
+  const referrerAddress = (userRow as any)?.referrer_address;
+  let upline = null;
+
+  if (referrerAddress && referrerAddress !== '0x0000000000000000000000000000000000000000') {
+    const { data: uplineUser, error: uplineErr } = await supabase
+      .from('users')
+      .select('address,energy_total,invite_count,created_at')
+      .eq('address', lower(referrerAddress))
+      .maybeSingle();
+
+    if (uplineErr) throw uplineErr;
+
+    if (uplineUser) {
+      upline = {
+        address: (uplineUser as any).address,
+        energyTotal: String((uplineUser as any).energy_total || 0),
+        inviteCount: String((uplineUser as any).invite_count || 0),
+        registeredAt: (uplineUser as any).created_at,
+      };
+    }
+  }
+
+  // 3. 查询下级（被推荐人列表，最多50个，按邀请数倒序）
+  const { data: downlineUsers, error: downlineErr } = await supabase
+    .from('users')
+    .select('address,energy_total,invite_count,created_at')
+    .eq('referrer_address', addr)
+    .order('invite_count', { ascending: false })
+    .limit(50);
+
+  if (downlineErr) throw downlineErr;
+
+  const downline = (downlineUsers || []).map((r: any) => ({
+    address: r.address,
+    energyTotal: String(r.energy_total || 0),
+    inviteCount: String(r.invite_count || 0),
+    registeredAt: r.created_at,
+  }));
+
+  return {
+    ok: true,
+    target,
+    upline,
+    downline,
+  };
+}
+
+/**
  * 获取 RAT 持币大户排行（Top Holders）
  * 从数据库获取所有用户，然后从链上读取他们的 RAT 余额，按余额排序
  */

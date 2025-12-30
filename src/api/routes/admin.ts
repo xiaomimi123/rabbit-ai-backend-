@@ -24,6 +24,7 @@ import {
   adminAdjustUserEnergy,
   adminAdjustUserUsdt,
   adminGetUser,
+  adminGetUserTeam,
   adminListRecentClaims,
   adminListRecentUsers,
   adminListUsers,
@@ -132,6 +133,18 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
       return await adminGetUser(deps.getProvider(), parsed.data.address);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  app.get('/api/admin/users/:address/team', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const addrParsed = AddressSchema.safeParse(String((req.params as any)?.address || '').toLowerCase());
+    if (!addrParsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: addrParsed.error.message });
+    try {
+      return await adminGetUserTeam(addrParsed.data);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
