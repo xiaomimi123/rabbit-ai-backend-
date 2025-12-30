@@ -50,6 +50,21 @@ export async function markAllNotificationsAsRead(address: string) {
   return { ok: true };
 }
 
+// 删除用户通知
+export async function deleteNotification(address: string, notificationId: string) {
+  const addr = address.toLowerCase();
+
+  const { error } = await supabase
+    .from('notifications')
+    .delete()
+    .eq('id', notificationId)
+    .eq('address', addr); // ✅ 确保只能删除自己的通知
+
+  if (error) throw error;
+
+  return { ok: true };
+}
+
 // 发送个人通知（管理员功能）
 export async function sendUserNotification(params: {
   address: string;

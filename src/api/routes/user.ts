@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TeamRewardsQuerySchema, UserInfoQuerySchema } from '../schemas.js';
 import { getTeamRewards, getUserInfo, getClaimsHistory, getReferralHistory } from '../../services/user.js';
-import { getUserNotifications, markNotificationAsRead, markAllNotificationsAsRead } from '../../services/notifications.js';
+import { getUserNotifications, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification } from '../../services/notifications.js';
 import { toErrorResponse } from '../errors.js';
 
 export function registerUserRoutes(app: FastifyInstance) {
@@ -82,6 +82,20 @@ export function registerUserRoutes(app: FastifyInstance) {
     }
     try {
       const data = await markAllNotificationsAsRead(body.address);
+      return data;
+    } catch (e) {
+      return reply.status(400).send({ ok: false, code: 'ERROR', message: String(e) });
+    }
+  });
+
+  // POST /api/user/notifications/delete
+  app.post('/api/user/notifications/delete', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { address: string; notificationId: string };
+    if (!body.address || !body.notificationId) {
+      return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: 'Missing address or notificationId' });
+    }
+    try {
+      const data = await deleteNotification(body.address, body.notificationId);
       return data;
     } catch (e) {
       return reply.status(400).send({ ok: false, code: 'ERROR', message: String(e) });
