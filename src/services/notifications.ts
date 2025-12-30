@@ -132,3 +132,46 @@ export async function broadcastNotification(params: {
   return { ok: true, sent: notifications.length };
 }
 
+// 获取广播历史记录（管理员功能）
+export async function getBroadcastHistory() {
+  // 从notifications表中查询，通过group by title, content, created_at来识别广播记录
+  // 广播通知的特点是：同一时间、相同title和content发送给多个用户
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('title, content, type, created_at')
+    .order('created_at', { ascending: false })
+    .limit(1000);
+
+  if (error) throw error;
+
+  // 按title、content和created_at分组，统计发送数量
+  const grouped = new Map<string, {
+    title: string;
+    content: string;
+    type: string;
+    created_at: string;
+    sent_count: number;
+  }>();
+
+  (data || []).forEach((n: any) => {
+    const key = `${n.title}|${n.content}|${n.created_at}`;
+    if (grouped.has(key)) {
+      grouped.get(key)!.sent_count += 1;
+    } else {
+      grouped.set(key, {
+        title: n.title,
+        content: n.content,
+        type: n.type || 'SYSTEM',
+        created_at: n.created_at,
+        sent_count: 1,
+      });
+    }
+  });
+
+  // 转换为数组并添加id
+  return Array.from(grouped.values()).map((record, index) => ({
+    id: `broadcast_${index}_${record.created_at}`,
+    ...record,
+  }));
+}
+

@@ -43,7 +43,7 @@ import {
   getAdminRevenueWithDateRange,
   getAdminExpensesWithDateRange,
 } from '../../services/admin.js';
-import { sendUserNotification, broadcastNotification } from '../../services/notifications.js';
+import { sendUserNotification, broadcastNotification, getBroadcastHistory } from '../../services/notifications.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: () => ethers.providers.Provider }) {
   app.get('/api/admin/kpis', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -414,6 +414,17 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
     try {
       return await broadcastNotification(body.data);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/notifications/broadcast/history - 获取广播历史记录
+  app.get('/api/admin/notifications/broadcast/history', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      return await getBroadcastHistory();
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
