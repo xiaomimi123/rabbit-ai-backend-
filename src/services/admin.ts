@@ -70,11 +70,54 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
 
   const feeRecipientBnbWei = await provider.getBalance(feeRecipient);
 
-  // 持币生息模式：不再计算质押 TVL，改为计算总持币量（可选）
-  // 可以从 user_holdings 表汇总，或从链上统计
-  // 这里暂时返回 null，后续可以实现持币总量统计
+  // 计算累计总收益（所有历史空投手续费的总和）
+  // 从 claims 表统计总记录数，乘以 claimFee
+  const { count: totalClaimsCount, error: claimsCountErr } = await supabase
+    .from('claims')
+    .select('tx_hash', { count: 'exact', head: true });
+  const claimFee = parseFloat(ethers.utils.formatEther(claimFeeWei));
+  const totalRevenueBNB = claimsCountErr ? 0 : (totalClaimsCount || 0) * claimFee;
+
+  // 计算 RAT 总持仓量：从链上读取所有用户的 RAT 余额并汇总
   let totalHoldings = null as null | { amount: string; symbol: string };
-  // TODO: 实现持币总量统计（从 user_holdings 表或链上汇总）
+  try {
+    // 从数据库获取所有用户地址
+    const { data: users, error: usersErr } = await supabase
+      .from('users')
+      .select('address')
+      .limit(1000); // 限制最多查询 1000 个用户，避免 RPC 调用过多
+    
+    if (!usersErr && users && users.length > 0) {
+      const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
+      const decimals = await ratContract.decimals().catch(() => 18);
+      
+      // 批量查询余额（使用 Promise.allSettled 避免单个失败影响整体）
+      const balancePromises = users.map(async (u: any) => {
+        try {
+          const balanceWei = await ratContract.balanceOf(u.address);
+          return parseFloat(ethers.utils.formatUnits(balanceWei, decimals));
+        } catch {
+          return 0;
+        }
+      });
+      
+      const balances = await Promise.allSettled(balancePromises);
+      const totalBalance = balances.reduce((acc, result) => {
+        if (result.status === 'fulfilled') {
+          return acc + result.value;
+        }
+        return acc;
+      }, 0);
+      
+      totalHoldings = {
+        amount: totalBalance.toFixed(2),
+        symbol: 'RAT',
+      };
+    }
+  } catch (error) {
+    console.error('[getAdminKpis] Failed to calculate total RAT holdings:', error);
+    // 失败时返回 null，不影响其他数据
+  }
 
   return {
     ok: true,
@@ -82,7 +125,7 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
     pendingWithdrawTotal: String(pendingTotal),
     pendingWithdrawUnit: 'USDT',
     airdropFeeRecipient: lower(String(feeRecipient)),
-    airdropFeeBalance: ethers.utils.formatEther(feeRecipientBnbWei),
+    airdropFeeBalance: totalRevenueBNB.toFixed(6), // ✅ 修复：显示累计总收益，而不是当前余额
     airdropFeeUnit: 'BNB',
     airdrop: {
       contract: config.airdropContract,
@@ -92,7 +135,7 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
       cooldownSec: Number(cooldownSec),
       rewardRange: { min: String(minReward), max: String(maxReward) },
     },
-    totalHoldings, // 持币总量（替代原来的 tvl）
+    totalHoldings, // ✅ 修复：计算所有用户的 RAT 总持仓量
     time: new Date().toISOString(),
   };
 }
