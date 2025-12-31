@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { AIRDROP_ABI } from '../infra/abis.js';
+import { AIRDROP_ABI, ERC20_ABI } from '../infra/abis.js';
 import { config } from '../config.js';
 import { supabase } from '../infra/supabase.js';
 import { ApiError } from '../api/errors.js';
@@ -254,6 +254,46 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     const errorMsg = '数据库函数 process_claim_energy 不存在。请确保已执行数据库迁移脚本（db/fix_process_claim_energy_block_time.sql）';
     console.error(`[verifyClaim] ❌ ${errorMsg}`);
     throw new ApiError('CONFIG_ERROR', errorMsg, 500);
+  }
+
+  // 🟢 修复：在领取空投前固化收益
+  // 原理：从链上读取当前余额（领取后的余额），减去本次领取金额得到旧余额
+  // 然后调用 settle_earnings_on_claim 固化从 last_settlement_time 到现在的收益
+  let oldBalance = 0;
+  try {
+    const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, params.provider);
+    const currentBalanceWei = await ratContract.balanceOf(address);
+    const decimals = await ratContract.decimals().catch(() => 18);
+    const currentBalance = parseFloat(ethers.utils.formatUnits(currentBalanceWei, decimals));
+    const claimedAmount = parseFloat(ethers.utils.formatEther(claimedAmountWei));
+    
+    // 旧余额 = 当前余额 - 本次领取金额
+    oldBalance = Math.max(0, currentBalance - claimedAmount);
+    
+    console.log(`[verifyClaim] 💰 收益固化: 当前余额=${currentBalance.toFixed(2)}, 领取金额=${claimedAmount.toFixed(2)}, 旧余额=${oldBalance.toFixed(2)}`);
+    
+    // 调用收益固化函数（如果旧余额 >= 10,000，说明已达到持币生息要求）
+    if (oldBalance >= 10000 && blockTimeIso) {
+      const { data: settleResult, error: settleError } = await supabase.rpc('settle_earnings_on_claim', {
+        p_address: address,
+        p_old_balance: oldBalance,
+        p_claim_time: blockTimeIso
+      });
+      
+      if (settleError) {
+        console.error(`[verifyClaim] ⚠️ 收益固化失败（继续处理空投）:`, settleError);
+        // 不抛出错误，继续处理空投，但记录警告
+      } else if (settleResult?.status === 'success') {
+        console.log(`[verifyClaim] ✅ 收益固化成功: 增量收益=${settleResult.incremental_earnings?.toFixed(6) || 0} USDT`);
+      } else {
+        console.log(`[verifyClaim] ℹ️ 收益固化跳过: ${settleResult?.reason || 'unknown'}`);
+      }
+    } else {
+      console.log(`[verifyClaim] ℹ️ 收益固化跳过: 旧余额=${oldBalance.toFixed(2)} < 10,000 或缺少区块时间`);
+    }
+  } catch (error: any) {
+    console.warn(`[verifyClaim] ⚠️ 获取余额失败（继续处理空投）: ${error?.message || error}`);
+    // 不抛出错误，继续处理空投
   }
 
   // ✅ 使用数据库 RPC 函数进行原子操作，解决并发问题
