@@ -75,17 +75,36 @@ export function registerAssetRoutes(app: FastifyInstance, deps: { getProvider: (
       // 注意：RAT_TOKEN_CONTRACT 在启动时已检查，这里不需要再次检查
       const provider = deps.getProvider();
       const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
-      const balanceWei = await ratContract.balanceOf(parsed.data.address);
-      const decimals = await ratContract.decimals().catch(() => 18);
+      
+      // 🔒 关键修复：添加超时保护（10秒），防止 RPC 调用无限等待
+      const balancePromise = ratContract.balanceOf(parsed.data.address);
+      const timeoutPromise = new Promise<ethers.BigNumber>((_, reject) => {
+        setTimeout(() => reject(new Error('RPC_TIMEOUT: balanceOf call exceeded 10 seconds')), 10000);
+      });
+      
+      const balanceWei = await Promise.race([balancePromise, timeoutPromise]);
+      const decimals = await Promise.race([
+        ratContract.decimals(),
+        new Promise<number>((resolve) => setTimeout(() => resolve(18), 5000))
+      ]).catch(() => 18);
       const balanceStr = ethers.utils.formatUnits(balanceWei, decimals);
       const balance = parseFloat(balanceStr);
 
       return {
         balance: balance.toFixed(2),
       };
-    } catch (e) {
-      const err = toErrorResponse(e);
-      return reply.status(400).send(err);
+    } catch (e: any) {
+      // 🟢 改进：即使 RPC 失败或超时，也返回默认值 0，避免阻塞前端
+      const errorMsg = e?.message || String(e);
+      if (errorMsg.includes('TIMEOUT') || errorMsg.includes('timeout')) {
+        console.warn(`[Asset] RPC timeout for ${parsed.data.address} (balanceOf), returning 0`);
+      } else {
+        console.warn(`[Asset] Failed to fetch RAT balance for ${parsed.data.address}: ${errorMsg}, returning 0`);
+      }
+      // 返回默认值而不是错误，确保前端能正常显示
+      return {
+        balance: '0.00',
+      };
     }
   });
 }
