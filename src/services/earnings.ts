@@ -63,37 +63,45 @@ export async function calculateUserEarnings(
     };
   }
 
-  // 步骤 3: 计算持币天数
-  const startTime = new Date(firstClaim.created_at).getTime();
-  const now = Date.now();
-  const daysHolding = Math.max(0, Math.floor((now - startTime) / (24 * 3600 * 1000)));
-
-  // 步骤 4: 确定 VIP 等级和日利率（从数据库配置读取）
-  const { dailyRate, tier: currentTier } = getVipTierByBalance(balance);
-
-  // 步骤 5: 计算历史总收益 = Balance * 0.01 * Rate * Days
-  const TOKEN_PRICE = 0.01; // $0.01 per RAT
-  const calculatedGrossEarnings = balance * TOKEN_PRICE * dailyRate * daysHolding;
-
-  // 步骤 5.5: 读取数据库中的 usdt_total（可能包含后台赠送的USDT）
-  // ⚠️ 重要：如果后台赠送了USDT，数据库中的 usdt_total 会大于计算值
-  // 此时应该使用数据库值，以确保后台赠送的USDT能正确显示
+  // 步骤 3: 读取用户数据（包括 last_settlement_time 和 usdt_total）
   const { data: userRow, error: userErr } = await supabase
     .from('users')
-    .select('usdt_total')
+    .select('usdt_total, last_settlement_time, created_at')
     .eq('address', addr)
     .maybeSingle();
 
   if (userErr) {
-    console.error(`[Earnings] Failed to query users.usdt_total for ${addr}:`, userErr);
-    // 如果查询失败，使用计算值
+    console.error(`[Earnings] Failed to query users table for ${addr}:`, userErr);
+    throw userErr;
   }
 
-  const dbUsdtTotal = Number((userRow as any)?.usdt_total || 0);
+  // 步骤 4: 确定 VIP 等级和日利率（从数据库配置读取）
+  const { dailyRate, tier: currentTier } = getVipTierByBalance(balance);
+
+  // 步骤 5: 计算实时收益（流式秒级结算）
+  // 🟢 核心改进：使用 last_settlement_time 作为基准时间，实现 Lazy Settle
+  const now = Date.now();
+  const lastSettlementTime = userRow?.last_settlement_time 
+    ? new Date(userRow.last_settlement_time).getTime()
+    : new Date(firstClaim.created_at).getTime(); // 如果没有结算时间，使用首次领取时间
   
-  // 使用数据库值（如果更大）或计算值
-  // 这样既能保持持币生息自动计算，又能兼容后台赠送逻辑
-  const grossEarnings = Math.max(dbUsdtTotal, calculatedGrossEarnings);
+  // 计算从上次结算到现在的天数（不取整，保留小数）
+  const timeElapsedMs = now - lastSettlementTime;
+  const daysElapsed = timeElapsedMs / (24 * 3600 * 1000); // 精确到毫秒的天数
+
+  // 计算增量收益 = Balance * 0.01 * Rate * Days（不取整）
+  const TOKEN_PRICE = 0.01; // $0.01 per RAT
+  const incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+
+  // 基准收益（已固化的收益，来自数据库）
+  const baseEarnings = Number((userRow as any)?.usdt_total || 0);
+
+  // 实时总收益 = 基准收益 + 增量收益
+  const grossEarnings = baseEarnings + incrementalEarnings;
+
+  // 计算持币天数（用于显示，从首次领取开始计算）
+  const startTime = new Date(firstClaim.created_at).getTime();
+  const daysHolding = Math.max(0, (now - startTime) / (24 * 3600 * 1000)); // 不取整，保留小数
 
   // 步骤 6: 查询数据库 withdrawals 表，统计该用户所有状态为 Pending 或 Completed 的提现总额
   // ⚠️ 重要：必须统计 Pending 和 Completed 两种状态，因为：
@@ -116,54 +124,28 @@ export async function calculateUserEarnings(
     return sum + amount;
   }, 0);
 
-  // 步骤 7: 计算当前可领收益 = 历史总收益 - 已提现总额
+  // 步骤 7: 计算当前可领收益 = 实时总收益 - 已提现总额
   // ⚠️ 关键修复：必须减去所有 Pending 和 Completed 的提现金额
   // 如果计算结果小于 0，返回 0（不能为负数）
   const netEarnings = Math.max(0, grossEarnings - totalWithdrawn);
 
-  // 调试日志：记录计算过程
-  console.log(`[Earnings] User ${addr}: grossEarnings=${grossEarnings.toFixed(2)}, totalWithdrawn=${totalWithdrawn.toFixed(2)}, netEarnings=${netEarnings.toFixed(2)}`);
+  // 调试日志：记录计算过程（流式秒级结算）
+  console.log(`[Earnings] User ${addr}: baseEarnings=${baseEarnings.toFixed(6)}, incrementalEarnings=${incrementalEarnings.toFixed(6)}, grossEarnings=${grossEarnings.toFixed(6)}, totalWithdrawn=${totalWithdrawn.toFixed(6)}, netEarnings=${netEarnings.toFixed(6)}`);
 
-  // 步骤 8: 异步更新 users 表的 usdt_total 字段（不阻塞返回）
-  // 注意：这是为了管理员后台能看到大致数据，不影响 API 响应
-  updateUserUsdtTotal(addr, grossEarnings).catch((err) => {
-    // 静默失败，不影响主流程
-    console.error(`[Earnings] Failed to update usdt_total for ${addr}:`, err);
-  });
+  // 🟢 移除：不再异步更新 usdt_total（Lazy Settle：只在提现时固化）
+  // 这样可以避免频繁的数据库写入，提高性能
 
   return {
-    pendingUsdt: netEarnings.toFixed(2),
+    pendingUsdt: netEarnings.toFixed(6), // 🟢 改为6位小数，支持秒级精度
     dailyRate: dailyRate * 100, // 转换为百分比（例如 0.02 -> 2）
     currentTier,
-    holdingDays: daysHolding,
+    holdingDays: Math.floor(daysHolding), // 显示时取整
     balance: balance.toFixed(2),
-    grossEarnings: grossEarnings.toFixed(2),
-    totalWithdrawn: totalWithdrawn.toFixed(2),
+    grossEarnings: grossEarnings.toFixed(6), // 🟢 改为6位小数
+    totalWithdrawn: totalWithdrawn.toFixed(6), // 🟢 改为6位小数
   };
 }
 
-/**
- * 异步更新用户的总收益（usdt_total）
- * 用于管理员后台查看大致数据
- */
-async function updateUserUsdtTotal(address: string, grossEarnings: number): Promise<void> {
-  try {
-    const { error } = await supabase
-      .from('users')
-      .upsert(
-        {
-          address: address.toLowerCase(),
-          usdt_total: grossEarnings,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'address' }
-      );
-
-    if (error) {
-      throw error;
-    }
-  } catch (error: any) {
-    // 重新抛出以便调用者处理
-    throw new Error(`Failed to update usdt_total: ${error?.message || error}`);
-  }
-}
+// 🟢 已移除：updateUserUsdtTotal 函数
+// 原因：实现 Lazy Settle（按需结算），只在提现时才固化收益到数据库
+// 这样可以避免频繁的数据库写入，提高性能

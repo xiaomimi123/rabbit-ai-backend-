@@ -13,7 +13,8 @@ export function registerAssetRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
 
     try {
-      return await applyWithdraw(parsed.data.address, parsed.data.amount);
+      const provider = deps.getProvider();
+      return await applyWithdraw(parsed.data.address, parsed.data.amount, provider);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
