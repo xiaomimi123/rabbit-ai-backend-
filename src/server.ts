@@ -11,7 +11,10 @@ import { registerVipRoutes } from './api/routes/vip.js';
 import type { ethers } from 'ethers';
 import { config } from './config.js';
 
-export function createServer(deps: { getProvider: () => ethers.providers.Provider }) {
+export function createServer(deps: { 
+  getProvider: () => ethers.providers.Provider;
+  getAdminProvider?: () => ethers.providers.Provider;
+}) {
   const app = Fastify({ logger: true });
 
   // CORS for Admin Panel / Web frontends
@@ -23,7 +26,10 @@ export function createServer(deps: { getProvider: () => ethers.providers.Provide
   registerUserRoutes(app);
   registerAssetRoutes(app, deps);
   registerMiningRoutes(app, deps);
-  registerAdminRoutes(app, deps);
+  registerAdminRoutes(app, { 
+    getProvider: deps.getProvider, 
+    getAdminProvider: deps.getAdminProvider || deps.getProvider 
+  });
   registerDebugRoutes(app);
   registerSystemRoutes(app);
   registerVipRoutes(app);

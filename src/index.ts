@@ -51,7 +51,17 @@ async function main() {
   let provider = rpcPool.current();
   const getProvider = () => provider;
 
-  const app = createServer({ getProvider });
+  // 🟢 为后台管理创建专用的 RPC Provider（如果配置了 ADMIN_RPC_URL）
+  let adminProvider: ethers.providers.Provider | null = null;
+  if (config.adminRpcUrl) {
+    adminProvider = new ethers.providers.JsonRpcProvider(config.adminRpcUrl);
+    console.log(`[startup] ✅ Admin RPC provider initialized: ${config.adminRpcUrl}`);
+  } else {
+    console.log('[startup] ℹ️  Admin RPC URL not configured, using default RPC pool for admin operations');
+  }
+  const getAdminProvider = () => adminProvider || provider;
+
+  const app = createServer({ getProvider, getAdminProvider });
 
   // start HTTP
   await app.listen({ host: '0.0.0.0', port: config.port });

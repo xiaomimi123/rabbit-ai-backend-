@@ -45,6 +45,10 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
+  // Optional: 专门用于后台管理的 RPC URL（用于查询用户 RAT 持仓）
+  // 如果未配置，则使用默认的 rpcUrls
+  adminRpcUrl: optionalStr('ADMIN_RPC_URL'),
+
   airdropContract: required('AIRDROP_CONTRACT').toLowerCase(),
 
   confirmations: optionalInt('CONFIRMATIONS', 12),

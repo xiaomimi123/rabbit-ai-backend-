@@ -45,11 +45,15 @@ import {
 } from '../../services/admin.js';
 import { sendUserNotification, broadcastNotification, getBroadcastHistory } from '../../services/notifications.js';
 
-export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: () => ethers.providers.Provider }) {
+export function registerAdminRoutes(app: FastifyInstance, deps: { 
+  getProvider: () => ethers.providers.Provider;
+  getAdminProvider: () => ethers.providers.Provider;
+}) {
   app.get('/api/admin/kpis', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!assertAdmin(req, reply)) return;
     try {
-      return await getAdminKpis(deps.getProvider());
+      // 🟢 使用专用的 Admin RPC Provider 查询 RAT 持仓
+      return await getAdminKpis(deps.getAdminProvider());
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
@@ -132,7 +136,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     const parsed = AdminUserQuerySchema.safeParse(req.query);
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     try {
-      return await adminGetUser(deps.getProvider(), parsed.data.address);
+      // 🟢 使用专用的 Admin RPC Provider 查询用户 RAT 余额
+      return await adminGetUser(deps.getAdminProvider(), parsed.data.address);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
@@ -158,7 +163,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     if (!addrParsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: addrParsed.error.message });
     try {
       const { calculateUserEarnings } = await import('../../services/earnings.js');
-      const result = await calculateUserEarnings(deps.getProvider(), addrParsed.data);
+      // 🟢 使用专用的 Admin RPC Provider 查询用户 RAT 余额
+      const result = await calculateUserEarnings(deps.getAdminProvider(), addrParsed.data);
       // 只返回前端需要的字段
       return {
         ok: true,
@@ -287,7 +293,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
       return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: 'limit must be between 1 and 20' });
     }
     try {
-      return await getTopRATHolders(deps.getProvider(), limit);
+      // 🟢 使用专用的 Admin RPC Provider 查询 RAT 持币大户
+      return await getTopRATHolders(deps.getAdminProvider(), limit);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
