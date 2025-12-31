@@ -27,8 +27,9 @@ export async function calculateUserEarnings(
 
   // 步骤 1: 从链上读取 RAT 余额
   // 注意：RAT_TOKEN_CONTRACT 在启动时已检查，这里不需要再次检查
+  // 🟢 改进：如果 RPC 失败，使用默认值 0，避免阻塞整个请求
   let balanceWei: ethers.BigNumber;
-  let balance: number;
+  let balance: number = 0;
   try {
     const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
     balanceWei = await ratContract.balanceOf(userAddress);
@@ -36,7 +37,10 @@ export async function calculateUserEarnings(
     const balanceStr = ethers.utils.formatUnits(balanceWei, decimals);
     balance = parseFloat(balanceStr);
   } catch (error: any) {
-    throw new ApiError('RPC_ERROR', `Failed to fetch RAT balance: ${error?.message || error}`, 500);
+    // 🟢 改进：记录警告但不抛出异常，使用默认值 0
+    // 这样即使 RPC 失败，也能返回基本的收益信息（基于数据库数据）
+    console.warn(`[Earnings] Failed to fetch RAT balance for ${addr}: ${error?.message || error}, using default 0`);
+    balance = 0;
   }
 
   // 步骤 2: 查询数据库 claims 表，找到用户最早的一条 created_at 时间

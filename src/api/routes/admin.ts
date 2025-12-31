@@ -168,8 +168,17 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
         holdingDays: result.holdingDays,
       };
     } catch (e) {
+      // 🟢 改进：即使计算失败，也返回默认值，避免阻塞用户列表加载
+      console.error(`[Admin] Failed to calculate earnings for ${addrParsed.data}:`, e);
       const err = toErrorResponse(e);
-      return reply.status(400).send(err);
+      // 返回默认值而不是错误，确保前端能正常显示
+      return {
+        ok: true,
+        pendingUsdt: '0',
+        dailyRate: 0,
+        currentTier: 0,
+        holdingDays: 0,
+      };
     }
   });
 
