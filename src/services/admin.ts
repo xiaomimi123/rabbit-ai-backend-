@@ -182,18 +182,27 @@ async function getUserEnergyRow(address: string) {
 async function updateUserBalances(
   address: string,
   next: { energyTotal: number; energyLocked: number; usdtTotal: number; usdtLocked: number },
-  createdAt: string
+  createdAt: string,
+  updateLastSettlementTime?: boolean // 可选：是否更新 last_settlement_time
 ) {
+  const updateData: any = {
+    address,
+    energy_total: next.energyTotal,
+    energy_locked: next.energyLocked,
+    usdt_total: next.usdtTotal,
+    usdt_locked: next.usdtLocked,
+    updated_at: new Date().toISOString(),
+    created_at: createdAt,
+  };
+  
+  // 🟢 修复：如果指定更新结算时间，则同时更新 last_settlement_time
+  // 这用于管理员赠送 USDT 时，确保增量收益从赠送时间点开始计算
+  if (updateLastSettlementTime) {
+    updateData.last_settlement_time = new Date().toISOString();
+  }
+  
   const { error } = await supabase.from('users').upsert(
-    {
-      address,
-      energy_total: next.energyTotal,
-      energy_locked: next.energyLocked,
-      usdt_total: next.usdtTotal,
-      usdt_locked: next.usdtLocked,
-      updated_at: new Date().toISOString(),
-      created_at: createdAt,
-    },
+    updateData,
     { onConflict: 'address' }
   );
   if (error) throw error;
@@ -769,10 +778,14 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
     throw new ApiError('INVALID_STATE', 'usdt_total cannot be less than usdt_locked', 400);
   }
 
+  // 🟢 修复：当管理员增加 USDT 时，同时更新 last_settlement_time
+  // 这样增量收益会从赠送时间点开始计算，而不是从旧的结算时间开始
+  // 确保管理员赠送的 USDT 能正确显示在可提现金额中
   await updateUserBalances(
     addr,
     { energyTotal: u.energyTotal, energyLocked: u.energyLocked, usdtTotal: nextTotal, usdtLocked: u.usdtLocked },
-    u.createdAt
+    u.createdAt,
+    true // 🟢 关键：更新 last_settlement_time，确保增量收益从当前时间开始计算
   );
 
   return {
