@@ -27,19 +27,35 @@ export async function calculateUserEarnings(
 
   // 步骤 1: 从链上读取 RAT 余额
   // 注意：RAT_TOKEN_CONTRACT 在启动时已检查，这里不需要再次检查
-  // 🟢 改进：如果 RPC 失败，使用默认值 0，避免阻塞整个请求
+  // 🟢 改进：如果 RPC 失败或超时，使用默认值 0，避免阻塞整个请求
   let balanceWei: ethers.BigNumber;
   let balance: number = 0;
   try {
     const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
-    balanceWei = await ratContract.balanceOf(userAddress);
-    const decimals = await ratContract.decimals().catch(() => 18);
+    
+    // 🔒 关键修复：添加超时保护（10秒），防止 RPC 调用无限等待
+    // 240秒超时说明 RPC 节点可能有问题，添加超时保护可以快速失败
+    const balancePromise = ratContract.balanceOf(userAddress);
+    const timeoutPromise = new Promise<ethers.BigNumber>((_, reject) => {
+      setTimeout(() => reject(new Error('RPC_TIMEOUT: balanceOf call exceeded 10 seconds')), 10000);
+    });
+    
+    balanceWei = await Promise.race([balancePromise, timeoutPromise]);
+    const decimals = await Promise.race([
+      ratContract.decimals(),
+      new Promise<number>((resolve) => setTimeout(() => resolve(18), 5000))
+    ]).catch(() => 18);
     const balanceStr = ethers.utils.formatUnits(balanceWei, decimals);
     balance = parseFloat(balanceStr);
   } catch (error: any) {
     // 🟢 改进：记录警告但不抛出异常，使用默认值 0
-    // 这样即使 RPC 失败，也能返回基本的收益信息（基于数据库数据）
-    console.warn(`[Earnings] Failed to fetch RAT balance for ${addr}: ${error?.message || error}, using default 0`);
+    // 这样即使 RPC 失败或超时，也能返回基本的收益信息（基于数据库数据）
+    const errorMsg = error?.message || String(error);
+    if (errorMsg.includes('TIMEOUT') || errorMsg.includes('timeout')) {
+      console.warn(`[Earnings] RPC timeout for ${addr} (balanceOf), using default 0`);
+    } else {
+      console.warn(`[Earnings] Failed to fetch RAT balance for ${addr}: ${errorMsg}, using default 0`);
+    }
     balance = 0;
   }
 

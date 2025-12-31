@@ -51,8 +51,17 @@ export function registerAssetRoutes(app: FastifyInstance, deps: { getProvider: (
         holdingDays: result.holdingDays,
       };
     } catch (e) {
+      // 🟢 改进：即使计算失败，也返回默认值，避免阻塞前端
+      // 这样即使 RPC 或数据库有问题，前端也能正常显示（显示为0）
+      console.error(`[Asset] Failed to calculate earnings for ${parsed.data.address}:`, e);
       const err = toErrorResponse(e);
-      return reply.status(400).send(err);
+      // 返回默认值而不是错误，确保前端能正常显示
+      return {
+        pendingUsdt: '0',
+        dailyRate: 0,
+        currentTier: 0,
+        holdingDays: 0,
+      };
     }
   });
 
