@@ -151,6 +151,28 @@ export function registerAdminRoutes(app: FastifyInstance, deps: { getProvider: (
     }
   });
 
+  // GET /api/admin/users/:address/earnings - 获取用户实时收益（需要 admin 认证）
+  app.get('/api/admin/users/:address/earnings', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const addrParsed = AddressSchema.safeParse(String((req.params as any)?.address || '').toLowerCase());
+    if (!addrParsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: addrParsed.error.message });
+    try {
+      const { calculateUserEarnings } = await import('../../services/earnings.js');
+      const result = await calculateUserEarnings(deps.getProvider(), addrParsed.data);
+      // 只返回前端需要的字段
+      return {
+        ok: true,
+        pendingUsdt: result.pendingUsdt,
+        dailyRate: result.dailyRate,
+        currentTier: result.currentTier,
+        holdingDays: result.holdingDays,
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
   app.post('/api/admin/users/:address/energy', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!assertAdmin(req, reply)) return;
     const addrParsed = AddressSchema.safeParse(String((req.params as any)?.address || '').toLowerCase());
