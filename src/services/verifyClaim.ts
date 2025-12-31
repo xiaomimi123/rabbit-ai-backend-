@@ -259,6 +259,11 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   // 🟢 修复：在领取空投前固化收益
   // 原理：从链上读取当前余额（领取后的余额），减去本次领取金额得到旧余额
   // 然后调用 settle_earnings_on_claim 固化从 last_settlement_time 到现在的收益
+  // 
+  // ⚠️ 注意：RPC 节点数据同步可能有延迟
+  // 如果 RPC 节点还未同步到最新余额，可能导致旧余额计算略低
+  // 这是可接受的安全误差（只会少算收益，不会多算，对项目方是安全的）
+  // 如果 currentBalance < claimedAmount，说明 RPC 延迟，使用兜底策略
   let oldBalance = 0;
   try {
     const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, params.provider);
@@ -268,7 +273,14 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     const claimedAmount = parseFloat(ethers.utils.formatEther(claimedAmountWei));
     
     // 旧余额 = 当前余额 - 本次领取金额
-    oldBalance = Math.max(0, currentBalance - claimedAmount);
+    // 🔒 防护：如果 currentBalance < claimedAmount，说明 RPC 节点延迟，使用兜底策略
+    if (currentBalance < claimedAmount) {
+      // RPC 延迟情况：假设旧余额就是当前余额（保守估计，不会多算收益）
+      oldBalance = currentBalance;
+      console.warn(`[verifyClaim] ⚠️ RPC 延迟检测: 当前余额=${currentBalance.toFixed(2)} < 领取金额=${claimedAmount.toFixed(2)}, 使用兜底策略`);
+    } else {
+      oldBalance = Math.max(0, currentBalance - claimedAmount);
+    }
     
     console.log(`[verifyClaim] 💰 收益固化: 当前余额=${currentBalance.toFixed(2)}, 领取金额=${claimedAmount.toFixed(2)}, 旧余额=${oldBalance.toFixed(2)}`);
     

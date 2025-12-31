@@ -3,10 +3,16 @@
 -- 执行时间: 2025-01-XX
 -- 
 -- 原理：
--- 1. 计算从 last_settlement_time 到现在的收益（使用旧余额）
--- 2. 将这部分收益固化到 usdt_total
--- 3. 更新 last_settlement_time 为当前时间
--- 4. 新领取的代币从领取时间开始计算收益
+-- 1. 使用 FOR UPDATE 锁定用户行，防止并发计算导致的重复收益发放
+-- 2. 计算从 last_settlement_time 到现在的收益（使用旧余额）
+-- 3. 将这部分收益固化到 usdt_total
+-- 4. 更新 last_settlement_time 为当前时间
+-- 5. 新领取的代币从领取时间开始计算收益
+--
+-- 安全性保障：
+-- - 行级锁（FOR UPDATE）：防止并发请求重复计算收益
+-- - 幂等性：如果用户不存在或余额不足，安全跳过
+-- - 边界处理：处理时间差为 0、余额不足等边界情况
 
 CREATE OR REPLACE FUNCTION public.settle_earnings_on_claim(
   p_address text,
@@ -33,7 +39,12 @@ BEGIN
   -- 1. 标准化地址
   p_address := lower(p_address);
   
-  -- 2. 获取用户数据
+  -- 🔒 关键修复：锁定用户行，防止并发计算导致的重复收益发放
+  -- 使用 FOR UPDATE 确保同一时间只有一个请求能读取和更新该用户的结算时间
+  -- 这解决了"竞态条件"漏洞：如果两个请求同时处理，第二个请求必须等待第一个完成
+  PERFORM 1 FROM users WHERE address = p_address FOR UPDATE;
+  
+  -- 2. 获取用户数据（在锁定后重新读取，确保获取最新数据）
   SELECT usdt_total, last_settlement_time, created_at
   INTO v_user_row
   FROM users
