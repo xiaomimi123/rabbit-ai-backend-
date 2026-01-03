@@ -797,6 +797,47 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
 }
 
 /**
+ * 管理员手动设置用户的 last_settlement_time
+ * 用于处理通过直接转账获得代币的情况，确保收益从正确的时间开始计算
+ * @param address 用户地址
+ * @param settlementTime ISO 8601 格式的时间字符串，例如 "2025-12-29T09:41:37.000Z"
+ */
+export async function adminSetUserSettlementTime(address: string, settlementTime: string) {
+  const addr = lower(address);
+  
+  // 验证时间格式
+  const time = new Date(settlementTime);
+  if (isNaN(time.getTime())) {
+    throw new ApiError('INVALID_REQUEST', 'Invalid settlement time format. Expected ISO 8601 format (e.g., "2025-12-29T09:41:37.000Z")', 400);
+  }
+  
+  // 确保用户存在
+  const u = await getUserEnergyRow(addr);
+  
+  // 更新 last_settlement_time
+  const { error } = await supabase
+    .from('users')
+    .update({ 
+      last_settlement_time: time.toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('address', addr);
+  
+  if (error) {
+    throw new ApiError('DATABASE_ERROR', `Failed to update last_settlement_time: ${error.message}`, 500);
+  }
+  
+  console.log(`[Admin] ✅ Set last_settlement_time for ${addr} to ${time.toISOString()}`);
+  
+  return {
+    ok: true,
+    address: addr,
+    lastSettlementTime: time.toISOString(),
+    message: 'last_settlement_time updated successfully'
+  };
+}
+
+/**
  * 获取财务收益明细（BNB 收入）
  * 从 claims 表统计用户领取空投产生的费用收入
  */

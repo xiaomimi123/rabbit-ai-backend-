@@ -6,6 +6,7 @@ import {
   AddressSchema,
   AdminAdjustUserEnergyBodySchema,
   AdminAdjustUserUsdtBodySchema,
+  AdminSetSettlementTimeBodySchema,
   AdminUserQuerySchema,
   AdminWithdrawCompleteBodySchema,
   AdminWithdrawListQuerySchema,
@@ -23,6 +24,7 @@ import {
   adminGetSystemConfig,
   adminAdjustUserEnergy,
   adminAdjustUserUsdt,
+  adminSetUserSettlementTime,
   adminGetUser,
   adminGetUserTeam,
   adminListRecentClaims,
@@ -214,6 +216,25 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
 
     try {
       return await adminAdjustUserUsdt(addrParsed.data, body.data.delta);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // POST /api/admin/users/:address/settlement-time
+  // 管理员手动设置用户的 last_settlement_time
+  // 用于处理通过直接转账获得代币的情况，确保收益从正确的时间开始计算
+  app.post('/api/admin/users/:address/settlement-time', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const addrParsed = AddressSchema.safeParse(String((req.params as any)?.address || '').toLowerCase());
+    if (!addrParsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: addrParsed.error.message });
+
+    const body = AdminSetSettlementTimeBodySchema.safeParse(req.body || {});
+    if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
+
+    try {
+      return await adminSetUserSettlementTime(addrParsed.data, body.data.settlementTime);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

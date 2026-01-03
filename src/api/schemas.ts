@@ -62,6 +62,14 @@ export const AdminAdjustUserUsdtBodySchema = z.object({
   reason: z.string().max(200).optional(),
 });
 
+export const AdminSetSettlementTimeBodySchema = z.object({
+  settlementTime: z.string().refine(
+    (val) => !isNaN(new Date(val).getTime()),
+    { message: 'Invalid ISO 8601 date format. Example: "2025-12-29T09:41:37.000Z"' }
+  ),
+  reason: z.string().max(200).optional(),
+});
+
 export const AdminFinanceQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
