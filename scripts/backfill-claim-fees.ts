@@ -19,14 +19,45 @@
 import { ethers } from 'ethers';
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
-import { config } from '../src/config.js';
 
-dotenv.config();
+// 🟢 修复：在服务器上，环境变量可能已经设置，不需要 dotenv
+// dotenv.config() 只在有 .env 文件时有用，服务器上通常使用系统环境变量
+try {
+  dotenv.config();
+} catch (e) {
+  // 忽略 dotenv 错误，使用系统环境变量
+}
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_KEY || ''
-);
+// 🟢 修复：直接从环境变量读取配置（支持多种环境变量名称）
+const supabaseUrl = process.env.SUPABASE_URL || '';
+// 尝试多种可能的环境变量名称
+const supabaseKey = 
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 
+  process.env.SUPABASE_SERVICE_KEY || 
+  process.env.SUPABASE_ANON_KEY || 
+  '';
+
+// 🟢 添加调试信息
+console.log('[环境变量检查]');
+console.log('  SUPABASE_URL:', supabaseUrl ? `${supabaseUrl.substring(0, 30)}...` : '未设置');
+console.log('  SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '已设置' : '未设置');
+console.log('  SUPABASE_SERVICE_KEY:', process.env.SUPABASE_SERVICE_KEY ? '已设置' : '未设置');
+console.log('  SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? '已设置' : '未设置');
+console.log('  最终使用的 supabaseKey:', supabaseKey ? '已设置' : '未设置');
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('\n❌ 缺少 Supabase 配置！');
+  console.error('   请确保在 Render.com 环境变量中设置了：');
+  console.error('   - SUPABASE_URL');
+  console.error('   - SUPABASE_SERVICE_ROLE_KEY (或 SUPABASE_SERVICE_KEY)');
+  console.error('\n   当前环境变量状态：');
+  console.error('   - SUPABASE_URL:', supabaseUrl ? '✅ 已设置' : '❌ 未设置');
+  console.error('   - SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ 已设置' : '❌ 未设置');
+  console.error('   - SUPABASE_SERVICE_KEY:', process.env.SUPABASE_SERVICE_KEY ? '✅ 已设置' : '❌ 未设置');
+  process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // RPC 配置
 const RPC_URLS = (process.env.BSC_RPC_URLS || '').split(',').filter(Boolean);
