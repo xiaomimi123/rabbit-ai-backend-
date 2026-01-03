@@ -111,20 +111,53 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
       console.warn('[getAdminKpis] Failed to get fee recipient balance:', e);
     }
 
-    // 计算累计总收益（所有历史空投手续费的总和）
-    // 从 claims 表统计总记录数，乘以 claimFee
-    const { count: totalClaimsCount, error: claimsCountErr } = await supabase
+    // 🟢 修复：计算累计总收益（使用实际支付的手续费）
+    // 从 claims 表查询所有记录的实际手续费总和
+    const { data: allClaims, error: claimsErr } = await supabase
       .from('claims')
-      .select('tx_hash', { count: 'exact', head: true });
-    totalRevenueBNB = claimsCountErr ? 0 : (totalClaimsCount || 0) * claimFee;
+      .select('fee_amount_wei');
+    if (claimsErr) {
+      console.warn('[getAdminKpis] Failed to get claims for revenue calculation:', claimsErr);
+      totalRevenueBNB = 0;
+    } else {
+      totalRevenueBNB = 0;
+      if (allClaims) {
+        for (const claim of allClaims) {
+          if (claim.fee_amount_wei) {
+            // 使用实际支付的手续费
+            totalRevenueBNB += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
+          } else {
+            // 降级：使用当前的 claimFee（历史记录可能没有 fee_amount_wei）
+            totalRevenueBNB += claimFee;
+          }
+        }
+      }
+    }
   } catch (rpcError: any) {
     console.error('[getAdminKpis] ⚠️ RPC 调用失败，使用默认值:', rpcError?.message || rpcError);
     // 🟢 即使 RPC 失败，也尝试从数据库计算累计收益
     try {
-      const { count: totalClaimsCount, error: claimsCountErr } = await supabase
+      // 🟢 修复：计算累计总收益（使用实际支付的手续费）
+      const { data: allClaims, error: claimsErr } = await supabase
         .from('claims')
-        .select('tx_hash', { count: 'exact', head: true });
-      totalRevenueBNB = claimsCountErr ? 0 : (totalClaimsCount || 0) * claimFee;
+        .select('fee_amount_wei');
+      if (claimsErr) {
+        console.warn('[getAdminKpis] Failed to get claims for revenue calculation:', claimsErr);
+        totalRevenueBNB = 0;
+      } else {
+        totalRevenueBNB = 0;
+        if (allClaims) {
+          for (const claim of allClaims) {
+            if (claim.fee_amount_wei) {
+              // 使用实际支付的手续费
+              totalRevenueBNB += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
+            } else {
+              // 降级：使用当前的 claimFee（历史记录可能没有 fee_amount_wei）
+              totalRevenueBNB += claimFee;
+            }
+          }
+        }
+      }
     } catch (dbError) {
       console.error('[getAdminKpis] Failed to calculate revenue from DB:', dbError);
     }
@@ -749,34 +782,67 @@ export async function getAdminUsdtBalance(provider: ethers.providers.Provider): 
  * 获取收益统计信息（用于 Revenue 页面）
  */
 export async function getRevenueStats(provider: ethers.providers.Provider) {
-  // 从链上读取 claimFee
-  const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
-  const claimFeeWei = await airdrop.claimFee();
-  const claimFee = parseFloat(ethers.utils.formatEther(claimFeeWei));
-
-  // 获取今日的收益记录数
+  // 🟢 修复：从数据库读取实际支付的手续费，而不是从链上读取当前的 claimFee
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const { count: todayCount, error: todayErr } = await supabase
+  
+  // 获取今日的收益记录（包含实际支付的手续费）
+  const { data: todayClaims, error: todayErr } = await supabase
     .from('claims')
-    .select('tx_hash', { count: 'exact', head: true })
+    .select('fee_amount_wei')
     .gte('created_at', todayStart.toISOString());
   if (todayErr) throw todayErr;
 
-  // 获取昨日的收益记录数（用于计算趋势）
+  // 获取昨日的收益记录（包含实际支付的手续费）
   const yesterdayStart = new Date(todayStart);
   yesterdayStart.setDate(yesterdayStart.getDate() - 1);
   const yesterdayEnd = new Date(todayStart);
-  const { count: yesterdayCount, error: yesterdayErr } = await supabase
+  const { data: yesterdayClaims, error: yesterdayErr } = await supabase
     .from('claims')
-    .select('tx_hash', { count: 'exact', head: true })
+    .select('fee_amount_wei')
     .gte('created_at', yesterdayStart.toISOString())
     .lt('created_at', yesterdayEnd.toISOString());
   if (yesterdayErr) throw yesterdayErr;
 
+  // 🟢 修复：获取降级值（如果某些记录没有 fee_amount_wei）
+  let fallbackClaimFee = 0;
+  try {
+    const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
+    const claimFeeWei = await airdrop.claimFee();
+    fallbackClaimFee = parseFloat(ethers.utils.formatEther(claimFeeWei));
+  } catch (e) {
+    console.warn('[getRevenueStats] Failed to get claimFee from contract, using 0 as fallback:', e);
+  }
+
+  // 🟢 修复：计算今日收益（使用实际支付的手续费）
+  let todayRevenue = 0;
+  let todayCount = 0;
+  if (todayClaims) {
+    for (const claim of todayClaims) {
+      todayCount++;
+      if (claim.fee_amount_wei) {
+        todayRevenue += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
+      } else {
+        // 降级：使用当前的 claimFee
+        todayRevenue += fallbackClaimFee;
+      }
+    }
+  }
+
+  // 🟢 修复：计算昨日收益（使用实际支付的手续费）
+  let yesterdayRevenue = 0;
+  if (yesterdayClaims) {
+    for (const claim of yesterdayClaims) {
+      if (claim.fee_amount_wei) {
+        yesterdayRevenue += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
+      } else {
+        // 降级：使用当前的 claimFee
+        yesterdayRevenue += fallbackClaimFee;
+      }
+    }
+  }
+
   // 计算趋势（今日 vs 昨日）
-  const todayRevenue = (todayCount || 0) * claimFee;
-  const yesterdayRevenue = (yesterdayCount || 0) * claimFee;
   const trend = yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : 0;
 
   // 今日预期收益（基于当前速率，假设每小时速率不变）
@@ -784,8 +850,8 @@ export async function getRevenueStats(provider: ethers.providers.Provider) {
   const hoursElapsed = (now.getTime() - todayStart.getTime()) / (1000 * 60 * 60);
   const estimatedDaily = hoursElapsed > 0 ? (todayRevenue / hoursElapsed) * 24 : 0;
 
-  // 平均单笔费率（就是 claimFee）
-  const avgFee = claimFee;
+  // 平均单笔费率（今日总收益 / 今日记录数）
+  const avgFee = todayCount > 0 ? todayRevenue / todayCount : fallbackClaimFee;
 
   return {
     ok: true,
@@ -894,39 +960,76 @@ export async function adminSetUserSettlementTime(address: string, settlementTime
  * 从 claims 表统计用户领取空投产生的费用收入
  */
 export async function getFinanceRevenue(provider: ethers.providers.Provider, page: number, pageSize: number) {
-  // 从链上读取 claimFee（每次查询时读取，确保数据准确）
-  const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
-  const claimFeeWei = await airdrop.claimFee();
-  const claimFee = ethers.utils.formatEther(claimFeeWei);
-
-  // 获取总数
+  // 🟢 修复：从数据库读取实际支付的手续费，而不是从链上读取当前的 claimFee
+  // 获取总数（需要统计所有记录的实际手续费总和）
   const { count, error: countErr } = await supabase
     .from('claims')
     .select('tx_hash', { count: 'exact', head: true });
   if (countErr) throw countErr;
 
-  // 分页查询
+  // 分页查询，包含 fee_amount_wei 字段
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const { data, error } = await supabase
     .from('claims')
-    .select('tx_hash,address,created_at')
+    .select('tx_hash,address,created_at,fee_amount_wei')
     .order('created_at', { ascending: false })
     .range(from, to);
   if (error) throw error;
 
-  // 计算总收入 = claimFee * 总记录数
-  const totalRevenue = Number(claimFee) * Number(count || 0);
+  // 🟢 修复：获取降级值（如果某些记录没有 fee_amount_wei）
+  let fallbackClaimFee = '0';
+  try {
+    const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
+    const claimFeeWei = await airdrop.claimFee();
+    fallbackClaimFee = ethers.utils.formatEther(claimFeeWei);
+  } catch (e) {
+    console.warn('[getFinanceRevenue] Failed to get claimFee from contract, using 0 as fallback:', e);
+  }
+
+  // 🟢 修复：计算总收入时，需要查询所有记录的实际手续费
+  // 为了性能，我们只计算当前页的金额，总金额需要单独查询
+  let totalRevenue = 0;
+  try {
+    // 查询所有记录的实际手续费总和
+    const { data: allFees, error: feesErr } = await supabase
+      .from('claims')
+      .select('fee_amount_wei');
+    if (!feesErr && allFees) {
+      for (const record of allFees) {
+        if (record.fee_amount_wei) {
+          totalRevenue += parseFloat(ethers.utils.formatEther(record.fee_amount_wei));
+        } else {
+          // 降级：使用当前的 claimFee
+          totalRevenue += parseFloat(fallbackClaimFee);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[getFinanceRevenue] Failed to calculate total revenue, using fallback:', e);
+    // 如果查询失败，使用降级值
+    totalRevenue = parseFloat(fallbackClaimFee) * (count || 0);
+  }
 
   return {
     ok: true,
-    items: (data || []).map((r: any) => ({
-      txHash: r.tx_hash,
-      address: r.address,
-      amount: claimFee,
-      unit: 'BNB',
-      createdAt: r.created_at,
-    })),
+    items: (data || []).map((r: any) => {
+      let feeAmount = '0';
+      if (r.fee_amount_wei) {
+        // 使用实际支付的手续费
+        feeAmount = ethers.utils.formatEther(r.fee_amount_wei);
+      } else {
+        // 降级：使用当前的 claimFee
+        feeAmount = fallbackClaimFee;
+      }
+      return {
+        txHash: r.tx_hash,
+        address: r.address,
+        amount: feeAmount,
+        unit: 'BNB',
+        createdAt: r.created_at,
+      };
+    }),
     total: totalRevenue.toFixed(6),
     totalCount: count || 0,
   };
@@ -1095,15 +1198,11 @@ export async function getAdminRevenueWithDateRange(
   const limit = params.limit || 100;
   const offset = params.offset || 0;
 
-  // 从链上读取 claimFee
-  const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
-  const claimFeeWei = await airdrop.claimFee();
-  const claimFee = ethers.utils.formatEther(claimFeeWei);
-
-  // 构建查询
+  // 🟢 修复：从数据库读取实际支付的手续费，而不是从链上读取当前的 claimFee
+  // 构建查询，包含 fee_amount_wei 字段
   let query = supabase
     .from('claims')
-    .select('tx_hash,address,created_at', { count: 'exact' })
+    .select('tx_hash,address,created_at,fee_amount_wei', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
@@ -1118,19 +1217,42 @@ export async function getAdminRevenueWithDateRange(
   const { data, count, error } = await query;
   if (error) throw error;
 
-  // 计算总收入
-  const totalRevenue = Number(claimFee) * (count || 0);
+  // 🟢 修复：使用实际支付的手续费计算总收入
+  // 如果 fee_amount_wei 为空，降级使用当前的 claimFee（向后兼容）
+  let fallbackClaimFee = '0';
+  try {
+    const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
+    const claimFeeWei = await airdrop.claimFee();
+    fallbackClaimFee = ethers.utils.formatEther(claimFeeWei);
+  } catch (e) {
+    console.warn('[getAdminRevenueWithDateRange] Failed to get claimFee from contract, using 0 as fallback:', e);
+  }
 
-  return {
-    ok: true,
-    items: (data || []).map((r: any) => ({
+  // 计算总收入：使用实际支付的手续费，如果为空则使用降级值
+  let totalRevenue = 0;
+  const items = (data || []).map((r: any) => {
+    let feeAmount = 0;
+    if (r.fee_amount_wei) {
+      // 使用实际支付的手续费
+      feeAmount = parseFloat(ethers.utils.formatEther(r.fee_amount_wei));
+    } else {
+      // 降级：使用当前的 claimFee（历史记录可能没有 fee_amount_wei）
+      feeAmount = parseFloat(fallbackClaimFee);
+    }
+    totalRevenue += feeAmount;
+    return {
       id: r.tx_hash,
       address: r.address,
-      feeAmount: Number(claimFee),
+      feeAmount: feeAmount,
       asset: 'BNB' as const,
       timestamp: r.created_at,
       txHash: r.tx_hash,
-    })),
+    };
+  });
+
+  return {
+    ok: true,
+    items,
     total: totalRevenue,
   };
 }

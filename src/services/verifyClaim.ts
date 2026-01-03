@@ -309,7 +309,9 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   }
 
   // ✅ 使用数据库 RPC 函数进行原子操作，解决并发问题
-  console.log(`[verifyClaim] 开始处理交易: ${txHash}, 地址: ${address}, 推荐人: ${validReferrer}, 金额: ${ethers.utils.formatEther(claimedAmountWei)} RAT`);
+  // 🟢 新增：获取用户实际支付的 BNB 手续费（tx.value）
+  const feeAmountWei = tx.value ? tx.value.toString() : null;
+  console.log(`[verifyClaim] 开始处理交易: ${txHash}, 地址: ${address}, 推荐人: ${validReferrer}, 金额: ${ethers.utils.formatEther(claimedAmountWei)} RAT, 手续费: ${feeAmountWei ? ethers.utils.formatEther(feeAmountWei) : 'N/A'} BNB`);
   
   const { data: rpcResult, error: rpcError } = await supabase.rpc('process_claim_energy', {
     p_tx_hash: txHash,
@@ -317,7 +319,8 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     p_referrer: validReferrer,
     p_amount_wei: claimedAmountWei,
     p_block_number: receipt.blockNumber,
-    p_block_time: blockTimeIso || new Date().toISOString()
+    p_block_time: blockTimeIso || new Date().toISOString(),
+    p_fee_amount_wei: feeAmountWei  // 🟢 新增：传递实际支付的手续费
   });
 
   if (rpcError) {
