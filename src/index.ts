@@ -80,6 +80,44 @@ async function main() {
       app.log.error({ err: (e as any)?.message || e }, 'indexer fatal');
     });
   });
+
+  // 🟢 新增：启动访问统计数据定期清理任务
+  if (config.analyticsCleanupEnabled) {
+    const cleanupIntervalMs = config.analyticsCleanupIntervalHours * 60 * 60 * 1000;
+    console.log(`[startup] ✅ Analytics cleanup enabled: will run every ${config.analyticsCleanupIntervalHours} hours, keeping ${config.analyticsCleanupDays} days of data`);
+    
+    // 立即执行一次清理（可选）
+    setImmediate(async () => {
+      try {
+        const { cleanupOldVisits } = await import('./services/analytics.js');
+        const result = await cleanupOldVisits(config.analyticsCleanupDays);
+        if (result.ok) {
+          console.log(`[Analytics Cleanup] Initial cleanup completed: deleted ${result.deletedCount} records`);
+        } else {
+          console.error(`[Analytics Cleanup] Initial cleanup failed: ${result.error}`);
+        }
+      } catch (e) {
+        console.error('[Analytics Cleanup] Initial cleanup error:', e);
+      }
+    });
+
+    // 设置定期清理
+    setInterval(async () => {
+      try {
+        const { cleanupOldVisits } = await import('./services/analytics.js');
+        const result = await cleanupOldVisits(config.analyticsCleanupDays);
+        if (result.ok) {
+          console.log(`[Analytics Cleanup] Scheduled cleanup completed: deleted ${result.deletedCount} records`);
+        } else {
+          console.error(`[Analytics Cleanup] Scheduled cleanup failed: ${result.error}`);
+        }
+      } catch (e) {
+        console.error('[Analytics Cleanup] Scheduled cleanup error:', e);
+      }
+    }, cleanupIntervalMs);
+  } else {
+    console.log('[startup] ℹ️  Analytics cleanup disabled (set ANALYTICS_CLEANUP_ENABLED=true to enable)');
+  }
 }
 
 main().catch((e) => {

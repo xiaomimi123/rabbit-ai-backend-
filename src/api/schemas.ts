@@ -80,6 +80,11 @@ export const AdminVisitStatsQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
 
+// 🟢 新增：清理旧数据请求体
+export const AdminCleanupVisitsBodySchema = z.object({
+  daysToKeep: z.coerce.number().int().min(1).max(3650).optional().default(90), // 默认保留 90 天，最多 10 年
+});
+
 export const AdminSetSettlementTimeBodySchema = z.object({
   settlementTime: z.string().refine(
     (val) => !isNaN(new Date(val).getTime()),

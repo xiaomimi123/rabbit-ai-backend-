@@ -477,3 +477,155 @@ export async function getVisitSummary(params?: {
   }
 }
 
+// 🟢 新增：获取数据库统计信息
+export async function getAnalyticsStats(): Promise<{
+  ok: boolean;
+  totalRecords: number;
+  oldestRecord: string | null;
+  newestRecord: string | null;
+  estimatedSize: string;
+  recordsByMonth: Array<{ month: string; count: number }>;
+}> {
+  try {
+    // 1. 总记录数
+    const { count: totalRecords, error: countError } = await supabase
+      .from('page_visits')
+      .select('*', { count: 'exact', head: true });
+    if (countError) throw countError;
+
+    // 2. 最旧和最新记录
+    const { data: oldestData, error: oldestError } = await supabase
+      .from('page_visits')
+      .select('created_at')
+      .order('created_at', { ascending: true })
+      .limit(1);
+    if (oldestError) throw oldestError;
+
+    const { data: newestData, error: newestError } = await supabase
+      .from('page_visits')
+      .select('created_at')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (newestError) throw newestError;
+
+    // 3. 估算数据库大小（每条记录约 500 字节）
+    const estimatedSizeBytes = (totalRecords || 0) * 500;
+    const estimatedSizeMB = (estimatedSizeBytes / 1024 / 1024).toFixed(2);
+
+    // 4. 按月统计记录数（最近 12 个月）
+    const { data: allRecords, error: recordsError } = await supabase
+      .from('page_visits')
+      .select('created_at')
+      .order('created_at', { ascending: false })
+      .limit(100000); // 限制查询数量，避免内存问题
+    if (recordsError) throw recordsError;
+
+    const monthMap = new Map<string, number>();
+    (allRecords || []).forEach((record: any) => {
+      if (record.created_at) {
+        const date = new Date(record.created_at);
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + 1);
+      }
+    });
+
+    const recordsByMonth = Array.from(monthMap.entries())
+      .map(([month, count]) => ({ month, count }))
+      .sort((a, b) => b.month.localeCompare(a.month))
+      .slice(0, 12);
+
+    return {
+      ok: true,
+      totalRecords: totalRecords || 0,
+      oldestRecord: oldestData?.[0]?.created_at || null,
+      newestRecord: newestData?.[0]?.created_at || null,
+      estimatedSize: `${estimatedSizeMB} MB`,
+      recordsByMonth,
+    };
+  } catch (error: any) {
+    console.error('[Analytics] Failed to get analytics stats:', error);
+    throw error;
+  }
+}
+
+// 🟢 新增：清理旧数据
+export async function cleanupOldVisits(daysToKeep: number = 90): Promise<{
+  ok: boolean;
+  deletedCount: number;
+  error?: string;
+}> {
+  try {
+    if (daysToKeep < 1) {
+      throw new Error('daysToKeep must be at least 1');
+    }
+
+    // 计算截止日期
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+    const cutoffDateISO = cutoffDate.toISOString();
+
+    console.log(`[Analytics] Starting cleanup: deleting records older than ${cutoffDateISO} (${daysToKeep} days)`);
+
+    // 先查询要删除的记录数
+    const { count: countToDelete, error: countError } = await supabase
+      .from('page_visits')
+      .select('*', { count: 'exact', head: true })
+      .lt('created_at', cutoffDateISO);
+    if (countError) throw countError;
+
+    console.log(`[Analytics] Found ${countToDelete || 0} records to delete`);
+
+    // 删除旧记录（分批删除，避免一次性删除太多）
+    let deletedCount = 0;
+    const batchSize = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      // 查询一批要删除的记录 ID
+      const { data: batch, error: batchError } = await supabase
+        .from('page_visits')
+        .select('id')
+        .lt('created_at', cutoffDateISO)
+        .limit(batchSize);
+      
+      if (batchError) throw batchError;
+
+      if (!batch || batch.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      // 删除这批记录
+      const idsToDelete = batch.map((r: any) => r.id);
+      const { error: deleteError } = await supabase
+        .from('page_visits')
+        .delete()
+        .in('id', idsToDelete);
+
+      if (deleteError) throw deleteError;
+
+      deletedCount += idsToDelete.length;
+      console.log(`[Analytics] Deleted ${deletedCount} records so far...`);
+
+      // 如果这批记录少于 batchSize，说明已经删除完了
+      if (batch.length < batchSize) {
+        hasMore = false;
+      }
+    }
+
+    console.log(`[Analytics] ✅ Cleanup completed: deleted ${deletedCount} records`);
+
+    return {
+      ok: true,
+      deletedCount,
+    };
+  } catch (error: any) {
+    console.error('[Analytics] Failed to cleanup old visits:', error);
+    return {
+      ok: false,
+      deletedCount: 0,
+      error: error?.message || 'Unknown error',
+    };
+  }
+}
+

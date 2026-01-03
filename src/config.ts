@@ -74,6 +74,11 @@ export const config = {
 
   jwtSecret: optionalStr('JWT_SECRET'),
   adminApiKey: optionalStr('ADMIN_API_KEY'),
+
+  // 🟢 新增：访问统计数据清理配置
+  analyticsCleanupDays: optionalInt('ANALYTICS_CLEANUP_DAYS', 90), // 默认保留 90 天
+  analyticsCleanupEnabled: process.env.ANALYTICS_CLEANUP_ENABLED === 'true', // 默认关闭，需要手动启用
+  analyticsCleanupIntervalHours: optionalInt('ANALYTICS_CLEANUP_INTERVAL_HOURS', 24), // 默认每 24 小时执行一次
 };
 
 if (config.rpcUrls.length === 0) {

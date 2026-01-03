@@ -19,6 +19,7 @@ import {
   AdminSendNotificationBodySchema,
   AdminBroadcastNotificationBodySchema,
   AdminVisitStatsQuerySchema,
+  AdminCleanupVisitsBodySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -46,7 +47,7 @@ import {
   getAdminRevenueWithDateRange,
   getAdminExpensesWithDateRange,
 } from '../../services/admin.js';
-import { getVisitStats, getVisitSummary } from '../../services/analytics.js';
+import { getVisitStats, getVisitSummary, getAnalyticsStats, cleanupOldVisits } from '../../services/analytics.js';
 import { sendUserNotification, broadcastNotification, getBroadcastHistory } from '../../services/notifications.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { 
@@ -506,6 +507,32 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
+    }
+  });
+
+  // 🟢 新增：GET /api/admin/analytics/stats - 获取数据库统计信息
+  app.get('/api/admin/analytics/stats', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const stats = await getAnalyticsStats();
+      return stats;
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(500).send(err);
+    }
+  });
+
+  // 🟢 新增：POST /api/admin/analytics/cleanup - 清理旧数据
+  app.post('/api/admin/analytics/cleanup', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const body = AdminCleanupVisitsBodySchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
+    try {
+      const result = await cleanupOldVisits(body.data.daysToKeep);
+      return result;
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(500).send(err);
     }
   });
 
