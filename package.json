@@ -9,16 +9,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.49.1",
     "@fastify/cors": "^10.0.0",
+    "@supabase/supabase-js": "^2.49.1",
+    "dotenv": "^17.2.3",
     "ethers": "^5.7.2",
     "fastify": "^5.2.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.2"
   }
 }
-
-
