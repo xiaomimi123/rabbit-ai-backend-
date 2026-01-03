@@ -34,28 +34,45 @@ export function registerAnalyticsRoutes(app: FastifyInstance) {
 
       // 🟢 修复2: Rate Limit - 检查同一 IP 的请求频率
       const clientIp = getClientIp(req);
+      console.log('[Analytics API] Client IP:', clientIp);
+      
       if (clientIp) {
         const rateLimitResult = await checkRateLimit(clientIp);
+        console.log('[Analytics API] Rate limit check:', rateLimitResult);
         if (!rateLimitResult.allowed) {
-          console.warn(`[Analytics] ⚠️ Rate limit exceeded for IP ${clientIp}`);
+          console.warn(`[Analytics] ⚠️ Rate limit exceeded for IP ${clientIp}:`, rateLimitResult.reason);
           // 静默失败，不返回错误（避免暴露限流信息）
           return { ok: false, message: 'Visit recording failed silently' };
         }
+      } else {
+        console.warn('[Analytics API] ⚠️ Client IP is null, proceeding anyway');
       }
 
+      console.log('[Analytics API] 📥 Request body:', JSON.stringify(req.body, null, 2));
+      
       const body = RecordVisitBodySchema.safeParse(req.body || {});
       if (!body.success) {
+        console.error('[Analytics API] ❌ Request validation failed:', body.error);
         return reply.status(400).send({ 
           ok: false, 
           code: 'INVALID_REQUEST', 
           message: body.error.message 
         });
       }
+      
+      console.log('[Analytics API] ✅ Request validated:', body.data);
 
       // 获取 User-Agent
       const userAgent = req.headers['user-agent'] || null;
 
       // 记录访问
+      console.log('[Analytics API] Recording visit:', {
+        ip: clientIp,
+        pagePath: body.data.pagePath,
+        walletAddress: body.data.walletAddress,
+        sessionId: body.data.sessionId,
+      });
+      
       const result = await recordPageVisit({
         ip: clientIp,
         userAgent,
@@ -66,6 +83,8 @@ export function registerAnalyticsRoutes(app: FastifyInstance) {
         isMobile: body.data.isMobile,
         sessionId: body.data.sessionId,
       });
+
+      console.log('[Analytics API] Visit recorded result:', result);
 
       return {
         ok: result.ok,

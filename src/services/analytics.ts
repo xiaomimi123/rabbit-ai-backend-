@@ -13,13 +13,25 @@ export function getClientIp(req: any): string | null {
   // 优先级：CF-Connecting-IP > X-Forwarded-For > X-Real-IP > req.ip
   // 注意：Cloudflare 会设置 CF-Connecting-IP，这是最可靠的
   
+  const headers = {
+    'cf-connecting-ip': req.headers['cf-connecting-ip'],
+    'x-forwarded-for': req.headers['x-forwarded-for'],
+    'x-real-ip': req.headers['x-real-ip'],
+    'req.ip': req.ip,
+  };
+  
+  console.log('[getClientIp] Checking headers:', headers);
+  
   // 1. 优先读取 Cloudflare 的真实 IP（最可靠）
   const cfIp = req.headers['cf-connecting-ip'];
   if (cfIp) {
     const ip = Array.isArray(cfIp) ? cfIp[0] : cfIp;
     // 验证不是 Cloudflare 内部 IP
     if (ip && !ip.startsWith('172.67.') && !ip.startsWith('172.64.')) {
+      console.log('[getClientIp] ✅ Using CF-Connecting-IP:', ip);
       return ip.trim();
+    } else {
+      console.log('[getClientIp] ⚠️ CF-Connecting-IP is Cloudflare internal IP, skipping:', ip);
     }
   }
 
@@ -280,32 +292,57 @@ export async function recordPageVisit(data: {
       walletAddress = data.walletAddress.toLowerCase();
     }
 
+    // 🟢 修复：确保 session_id 不为空（数据库要求）
+    const sessionId = data.sessionId || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const insertData = {
+      ip_address: data.ip || null,
+      country: geoLocation.country || null,
+      country_code: geoLocation.countryCode || null,
+      city: geoLocation.city || null,
+      user_agent: data.userAgent || null,
+      page_path: data.pagePath || '/',
+      wallet_address: walletAddress,
+      referrer: data.referrer || null,
+      language: data.language || null,
+      is_mobile: data.isMobile || false,
+      session_id: sessionId,
+      created_at: new Date().toISOString(),
+    };
+    
     // 插入数据库
+    console.log('[Analytics] 📝 Inserting page visit:', {
+      ip: data.ip,
+      pagePath: data.pagePath,
+      walletAddress: walletAddress,
+      sessionId: sessionId,
+      country: geoLocation.country,
+      insertData: JSON.stringify(insertData, null, 2),
+    });
+    
     const { data: inserted, error } = await supabase
       .from('page_visits')
-      .insert({
-        ip_address: data.ip || null,
-        country: geoLocation.country || null,
-        country_code: geoLocation.countryCode || null,
-        city: geoLocation.city || null,
-        user_agent: data.userAgent || null,
-        page_path: data.pagePath || '/',
-        wallet_address: walletAddress,
-        referrer: data.referrer || null,
-        language: data.language || null,
-        is_mobile: data.isMobile || false,
-        session_id: data.sessionId,
-        created_at: new Date().toISOString(),
-      })
+      .insert(insertData)
       .select('id')
       .single();
 
     if (error) {
-      console.error('[Analytics] Failed to insert page visit:', error);
+      console.error('[Analytics] ❌ Failed to insert page visit:', error);
+      console.error('[Analytics] Error code:', error.code);
+      console.error('[Analytics] Error message:', error.message);
+      console.error('[Analytics] Error details:', JSON.stringify(error, null, 2));
+      console.error('[Analytics] Insert data was:', JSON.stringify(insertData, null, 2));
       throw error;
     }
 
-    return { ok: true, id: inserted?.id };
+    if (!inserted || !inserted.id) {
+      console.error('[Analytics] ❌ Insert succeeded but no ID returned');
+      console.error('[Analytics] Insert result:', inserted);
+      return { ok: false };
+    }
+
+    console.log('[Analytics] ✅ Page visit inserted successfully:', { id: inserted.id });
+    return { ok: true, id: inserted.id };
   } catch (error: any) {
     console.error('[Analytics] Error recording page visit:', error);
     // 不抛出错误，避免影响前端用户体验
