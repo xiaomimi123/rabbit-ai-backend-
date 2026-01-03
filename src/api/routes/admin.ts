@@ -51,6 +51,18 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
   getProvider: () => ethers.providers.Provider;
   getAdminProvider: () => ethers.providers.Provider;
 }) {
+  // 🟢 新增：简单的认证验证接口，只验证密钥，不调用 RPC
+  // 用于登录验证，避免在登录时触发网络错误
+  app.get('/api/admin/auth/verify', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    // 如果 assertAdmin 通过，说明密钥有效
+    return {
+      ok: true,
+      message: 'Admin key verified successfully',
+      timestamp: new Date().toISOString(),
+    };
+  });
+
   app.get('/api/admin/kpis', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!assertAdmin(req, reply)) return;
     try {
