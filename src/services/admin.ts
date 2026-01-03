@@ -48,7 +48,7 @@ async function getAdminPayoutAddress(): Promise<string | null> {
 }
 
 export async function getAdminKpis(provider: ethers.providers.Provider) {
-  // users count
+  // users count - 🟢 优先从数据库查询，不依赖 RPC
   const { count: usersCount, error: usersErr } = await supabase.from('users').select('address', { count: 'exact', head: true });
   if (usersErr) {
     console.error('[getAdminKpis] Failed to count users:', usersErr);
@@ -64,26 +64,71 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
   if (pendErr) throw pendErr;
   const pendingTotal = (pend || []).reduce((acc: number, r: any) => acc + Number(r.amount || 0), 0);
 
-  // on-chain: airdrop config + fee recipient balance
-  const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
-  const [claimFeeWei, cooldownSec, minReward, maxReward, feeRecipient, tokenAddr] = await Promise.all([
-    airdrop.claimFee(),
-    airdrop.cooldown(),
-    airdrop.minReward(),
-    airdrop.maxReward(),
-    airdrop.feeRecipient(),
-    airdrop.token(),
-  ]);
+  // 🟢 修复：RPC 调用添加超时和错误处理，避免网络错误导致整个 API 失败
+  let claimFee = 0.001; // 默认值（如果 RPC 失败）
+  let cooldownSec = 14400; // 默认 4 小时
+  let minReward = '0';
+  let maxReward = '0';
+  let feeRecipient = '';
+  let tokenAddr = '';
+  let totalRevenueBNB = 0;
 
-  const feeRecipientBnbWei = await provider.getBalance(feeRecipient);
+  try {
+    // 使用 Promise.race 添加超时保护（10秒）
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('RPC timeout')), 10000)
+    );
 
-  // 计算累计总收益（所有历史空投手续费的总和）
-  // 从 claims 表统计总记录数，乘以 claimFee
-  const { count: totalClaimsCount, error: claimsCountErr } = await supabase
-    .from('claims')
-    .select('tx_hash', { count: 'exact', head: true });
-  const claimFee = parseFloat(ethers.utils.formatEther(claimFeeWei));
-  const totalRevenueBNB = claimsCountErr ? 0 : (totalClaimsCount || 0) * claimFee;
+    const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
+    const onChainData = await Promise.race([
+      Promise.all([
+        airdrop.claimFee(),
+        airdrop.cooldown(),
+        airdrop.minReward(),
+        airdrop.maxReward(),
+        airdrop.feeRecipient(),
+        airdrop.token(),
+      ]),
+      timeoutPromise
+    ]) as [ethers.BigNumber, ethers.BigNumber, ethers.BigNumber, ethers.BigNumber, string, string];
+
+    const [claimFeeWei, cooldownSecValue, minRewardWei, maxRewardWei, feeRecipientValue, tokenAddrValue] = onChainData;
+    
+    claimFee = parseFloat(ethers.utils.formatEther(claimFeeWei));
+    cooldownSec = Number(cooldownSecValue);
+    minReward = ethers.utils.formatEther(minRewardWei);
+    maxReward = ethers.utils.formatEther(maxRewardWei);
+    feeRecipient = lower(String(feeRecipientValue));
+    tokenAddr = lower(String(tokenAddrValue));
+
+    // 尝试获取 fee recipient 余额（可选，失败不影响其他数据）
+    try {
+      await Promise.race([
+        provider.getBalance(feeRecipient),
+        timeoutPromise
+      ]);
+    } catch (e) {
+      console.warn('[getAdminKpis] Failed to get fee recipient balance:', e);
+    }
+
+    // 计算累计总收益（所有历史空投手续费的总和）
+    // 从 claims 表统计总记录数，乘以 claimFee
+    const { count: totalClaimsCount, error: claimsCountErr } = await supabase
+      .from('claims')
+      .select('tx_hash', { count: 'exact', head: true });
+    totalRevenueBNB = claimsCountErr ? 0 : (totalClaimsCount || 0) * claimFee;
+  } catch (rpcError: any) {
+    console.error('[getAdminKpis] ⚠️ RPC 调用失败，使用默认值:', rpcError?.message || rpcError);
+    // 🟢 即使 RPC 失败，也尝试从数据库计算累计收益
+    try {
+      const { count: totalClaimsCount, error: claimsCountErr } = await supabase
+        .from('claims')
+        .select('tx_hash', { count: 'exact', head: true });
+      totalRevenueBNB = claimsCountErr ? 0 : (totalClaimsCount || 0) * claimFee;
+    } catch (dbError) {
+      console.error('[getAdminKpis] Failed to calculate revenue from DB:', dbError);
+    }
+  }
 
   // 计算 RAT 总持仓量：从链上读取所有用户的 RAT 余额并汇总
   let totalHoldings = null as null | { amount: string; symbol: string };
@@ -131,16 +176,16 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
     usersTotal: Number(finalUsersCount),
     pendingWithdrawTotal: String(pendingTotal),
     pendingWithdrawUnit: 'USDT',
-    airdropFeeRecipient: lower(String(feeRecipient)),
+    airdropFeeRecipient: feeRecipient || '',
     airdropFeeBalance: totalRevenueBNB.toFixed(6), // ✅ 修复：显示累计总收益，而不是当前余额
     airdropFeeUnit: 'BNB',
     airdrop: {
       contract: config.airdropContract,
-      token: lower(String(tokenAddr)),
-      claimFee: ethers.utils.formatEther(claimFeeWei),
+      token: tokenAddr || '',
+      claimFee: claimFee.toFixed(6),
       claimFeeUnit: 'BNB',
-      cooldownSec: Number(cooldownSec),
-      rewardRange: { min: String(minReward), max: String(maxReward) },
+      cooldownSec: cooldownSec,
+      rewardRange: { min: minReward, max: maxReward },
     },
     totalHoldings, // ✅ 修复：计算所有用户的 RAT 总持仓量
     time: new Date().toISOString(),
@@ -831,7 +876,7 @@ export async function adminSetUserSettlementTime(address: string, settlementTime
     .eq('address', addr);
   
   if (error) {
-    throw new ApiError('DATABASE_ERROR', `Failed to update last_settlement_time: ${error.message}`, 500);
+    throw new ApiError('INTERNAL_ERROR', `Failed to update last_settlement_time: ${error.message}`, 500);
   }
   
   console.log(`[Admin] ✅ Set last_settlement_time for ${addr} to ${time.toISOString()}`);
