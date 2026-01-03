@@ -50,7 +50,14 @@ async function getAdminPayoutAddress(): Promise<string | null> {
 export async function getAdminKpis(provider: ethers.providers.Provider) {
   // users count
   const { count: usersCount, error: usersErr } = await supabase.from('users').select('address', { count: 'exact', head: true });
-  if (usersErr) throw usersErr;
+  if (usersErr) {
+    console.error('[getAdminKpis] Failed to count users:', usersErr);
+    throw usersErr;
+  }
+  
+  // 🟢 修复：确保 usersCount 不为 null/undefined
+  const finalUsersCount = usersCount ?? 0;
+  console.log(`[getAdminKpis] Total users: ${finalUsersCount}`);
 
   // pending withdraw total
   const { data: pend, error: pendErr } = await supabase.from('withdrawals').select('amount').eq('status', 'Pending');
@@ -121,7 +128,7 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
 
   return {
     ok: true,
-    usersTotal: Number(usersCount || 0),
+    usersTotal: Number(finalUsersCount),
     pendingWithdrawTotal: String(pendingTotal),
     pendingWithdrawUnit: 'USDT',
     airdropFeeRecipient: lower(String(feeRecipient)),
