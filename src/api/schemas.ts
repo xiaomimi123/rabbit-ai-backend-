@@ -62,6 +62,24 @@ export const AdminAdjustUserUsdtBodySchema = z.object({
   reason: z.string().max(200).optional(),
 });
 
+// Analytics
+export const RecordVisitBodySchema = z.object({
+  pagePath: z.string().max(255).default('/'),
+  walletAddress: AddressSchema.optional().nullable(),
+  referrer: z.string().max(255).optional().nullable(),
+  language: z.string().max(10).optional(),
+  isMobile: z.boolean().optional().default(false),
+  sessionId: z.string().max(64),
+});
+
+export const AdminVisitStatsQuerySchema = z.object({
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  country: z.string().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+});
+
 export const AdminSetSettlementTimeBodySchema = z.object({
   settlementTime: z.string().refine(
     (val) => !isNaN(new Date(val).getTime()),

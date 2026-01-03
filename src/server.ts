@@ -8,6 +8,7 @@ import { registerAdminRoutes } from './api/routes/admin.js';
 import { registerDebugRoutes } from './api/routes/debug.js';
 import { registerSystemRoutes } from './api/routes/system.js';
 import { registerVipRoutes } from './api/routes/vip.js';
+import { registerAnalyticsRoutes } from './api/routes/analytics.js';
 import type { ethers } from 'ethers';
 import { config } from './config.js';
 
@@ -33,6 +34,7 @@ export function createServer(deps: {
   registerDebugRoutes(app);
   registerSystemRoutes(app);
   registerVipRoutes(app);
+  registerAnalyticsRoutes(app);
 
   return app;
 }

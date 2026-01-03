@@ -18,6 +18,7 @@ import {
   AdminExpensesQuerySchema,
   AdminSendNotificationBodySchema,
   AdminBroadcastNotificationBodySchema,
+  AdminVisitStatsQuerySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -45,6 +46,7 @@ import {
   getAdminRevenueWithDateRange,
   getAdminExpensesWithDateRange,
 } from '../../services/admin.js';
+import { getVisitStats, getVisitSummary } from '../../services/analytics.js';
 import { sendUserNotification, broadcastNotification, getBroadcastHistory } from '../../services/notifications.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { 
@@ -472,6 +474,35 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
     if (!body.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: body.error.message });
     try {
       return await sendUserNotification(body.data);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/analytics/visits - 获取访问统计列表
+  app.get('/api/admin/analytics/visits', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminVisitStatsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await getVisitStats(parsed.data);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/analytics/summary - 获取访问统计摘要
+  app.get('/api/admin/analytics/summary', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const parsed = AdminVisitStatsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    try {
+      return await getVisitSummary({
+        startDate: parsed.data.startDate,
+        endDate: parsed.data.endDate,
+      });
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
