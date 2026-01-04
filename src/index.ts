@@ -5,7 +5,46 @@ import { RpcPool } from './infra/rpcPool.js';
 import { startIndexer } from './indexer/indexer.js';
 import { loadVipTiers } from './services/vipConfig.js';
 
+// 🟢 新增：初始化 Sentry 错误监控（零风险，只添加监控，不影响业务逻辑）
+async function initSentry() {
+  if (!config.sentryDsn || !config.sentryEnabled) {
+    console.log('[startup] ℹ️  Sentry error monitoring disabled (SENTRY_DSN not configured or SENTRY_ENABLED=false)');
+    return;
+  }
+
+  try {
+    const Sentry = await import('@sentry/node');
+    Sentry.init({
+      dsn: config.sentryDsn,
+      environment: config.sentryEnvironment,
+      // 只监控错误，不监控性能（避免影响性能）
+      tracesSampleRate: 0,
+      // 采样率：100% 的错误都上报（推广阶段需要全面监控）
+      sampleRate: 1.0,
+      // 过滤已知错误（避免上报过多噪音）
+      beforeSend(event, hint) {
+        // 过滤掉数据库函数检查时的预期错误
+        const error = hint.originalException;
+        if (error && typeof error === 'object' && 'message' in error) {
+          const msg = String(error.message).toLowerCase();
+          if (msg.includes('function') && msg.includes('does not exist') && msg.includes('process_claim_energy')) {
+            return null; // 不上报这个预期错误
+          }
+        }
+        return event;
+      },
+    });
+    console.log(`[startup] ✅ Sentry error monitoring initialized (environment: ${config.sentryEnvironment})`);
+  } catch (e) {
+    console.warn('[startup] ⚠️  Failed to initialize Sentry:', e);
+    // Sentry 初始化失败不影响服务启动
+  }
+}
+
 async function main() {
+  // 🟢 优先初始化 Sentry（在服务启动前）
+  await initSentry();
+
   // 在服务启动时加载 VIP 配置到内存
   await loadVipTiers();
 
@@ -61,7 +100,7 @@ async function main() {
   }
   const getAdminProvider = () => adminProvider || provider;
 
-  const app = createServer({ getProvider, getAdminProvider });
+  const app = await createServer({ getProvider, getAdminProvider });
 
   // start HTTP
   await app.listen({ host: '0.0.0.0', port: config.port });

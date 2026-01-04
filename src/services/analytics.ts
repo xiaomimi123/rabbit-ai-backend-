@@ -352,6 +352,20 @@ export async function recordPageVisit(data: {
   }
 }
 
+// 🟢 辅助函数：规范化日期格式（将 YYYY-MM-DD 转换为 ISO 8601）
+function normalizeDate(dateString: string, isEndDate = false): string {
+  // 如果已经是完整的 ISO 8601 格式，直接返回
+  if (dateString.includes('T')) {
+    return dateString;
+  }
+  // 如果是 YYYY-MM-DD 格式，转换为 ISO 8601
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const time = isEndDate ? 'T23:59:59.999Z' : 'T00:00:00.000Z';
+    return `${dateString}${time}`;
+  }
+  return dateString;
+}
+
 // 获取访问统计（管理员使用）
 export async function getVisitStats(params: {
   startDate?: string;
@@ -365,12 +379,14 @@ export async function getVisitStats(params: {
     .select('*', { count: 'exact' })
     .order('created_at', { ascending: false });
 
-  // 时间范围筛选
+  // 时间范围筛选（规范化日期格式）
   if (params.startDate) {
-    query = query.gte('created_at', params.startDate);
+    const normalizedStartDate = normalizeDate(params.startDate, false);
+    query = query.gte('created_at', normalizedStartDate);
   }
   if (params.endDate) {
-    query = query.lte('created_at', params.endDate);
+    const normalizedEndDate = normalizeDate(params.endDate, true);
+    query = query.lte('created_at', normalizedEndDate);
   }
 
   // 国家筛选
@@ -406,10 +422,12 @@ export async function getVisitSummary(params?: {
     // 1. 总访问量（考虑时间范围）
     let totalQuery = supabase.from('page_visits').select('*', { count: 'exact', head: true });
     if (params?.startDate) {
-      totalQuery = totalQuery.gte('created_at', params.startDate);
+      const normalizedStartDate = normalizeDate(params.startDate, false);
+      totalQuery = totalQuery.gte('created_at', normalizedStartDate);
     }
     if (params?.endDate) {
-      totalQuery = totalQuery.lte('created_at', params.endDate);
+      const normalizedEndDate = normalizeDate(params.endDate, true);
+      totalQuery = totalQuery.lte('created_at', normalizedEndDate);
     }
     const { count: totalVisits, error: countError } = await totalQuery;
     if (countError) throw countError;
@@ -429,10 +447,12 @@ export async function getVisitSummary(params?: {
       .select('country, country_code')
       .not('country', 'is', null);
     if (params?.startDate) {
-      countryQuery = countryQuery.gte('created_at', params.startDate);
+      const normalizedStartDate = normalizeDate(params.startDate, false);
+      countryQuery = countryQuery.gte('created_at', normalizedStartDate);
     }
     if (params?.endDate) {
-      countryQuery = countryQuery.lte('created_at', params.endDate);
+      const normalizedEndDate = normalizeDate(params.endDate, true);
+      countryQuery = countryQuery.lte('created_at', normalizedEndDate);
     }
     const { data: countryData, error: countryError } = await countryQuery;
     if (countryError) throw countryError;
@@ -458,10 +478,12 @@ export async function getVisitSummary(params?: {
       .select('*', { count: 'exact', head: true })
       .not('wallet_address', 'is', null);
     if (params?.startDate) {
-      walletQuery = walletQuery.gte('created_at', params.startDate);
+      const normalizedStartDate = normalizeDate(params.startDate, false);
+      walletQuery = walletQuery.gte('created_at', normalizedStartDate);
     }
     if (params?.endDate) {
-      walletQuery = walletQuery.lte('created_at', params.endDate);
+      const normalizedEndDate = normalizeDate(params.endDate, true);
+      walletQuery = walletQuery.lte('created_at', normalizedEndDate);
     }
     const { count: walletVisits, error: walletError } = await walletQuery;
     if (walletError) throw walletError;

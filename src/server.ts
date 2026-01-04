@@ -1,5 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { registerHealthRoutes } from './api/routes/health.js';
 import { registerUserRoutes } from './api/routes/user.js';
 import { registerMiningRoutes } from './api/routes/mining.js';
@@ -12,7 +14,7 @@ import { registerAnalyticsRoutes } from './api/routes/analytics.js';
 import type { ethers } from 'ethers';
 import { config } from './config.js';
 
-export function createServer(deps: { 
+export async function createServer(deps: { 
   getProvider: () => ethers.providers.Provider;
   getAdminProvider?: () => ethers.providers.Provider;
 }) {
@@ -44,10 +46,96 @@ export function createServer(deps: {
     });
   }
 
+  // 🟢 新增：Sentry 错误处理钩子（零风险，只添加监控，不影响业务逻辑）
+  if (config.sentryDsn && config.sentryEnabled) {
+    app.setErrorHandler(async (error, request, reply) => {
+      // 上报错误到 Sentry
+      try {
+        const Sentry = await import('@sentry/node');
+        Sentry.captureException(error, {
+          tags: {
+            method: request.method,
+            url: request.url,
+            statusCode: reply.statusCode || 500,
+          },
+          extra: {
+            headers: request.headers,
+            query: request.query,
+            body: request.body,
+          },
+        });
+      } catch (sentryError) {
+        // Sentry 上报失败不影响错误处理
+        app.log.warn({ err: sentryError }, 'Failed to report error to Sentry');
+      }
+
+      // 继续使用原有的错误处理逻辑
+      const err = error as any;
+      if (err.statusCode) {
+        return reply.status(err.statusCode).send({
+          ok: false,
+          code: err.code || 'INTERNAL_ERROR',
+          message: err.message || 'Internal server error',
+        });
+      }
+
+      app.log.error({ err: error }, 'Unhandled error');
+      return reply.status(500).send({
+        ok: false,
+        code: 'INTERNAL_ERROR',
+        message: 'Internal server error',
+      });
+    });
+  }
+
   // CORS for Admin Panel / Web frontends
   const allow = config.corsOrigins || '*';
   const origin = allow === '*' ? true : allow.split(',').map((s) => s.trim()).filter(Boolean);
   app.register(cors, { origin });
+
+  // 🟢 新增：Swagger API 文档（零风险，只生成文档，不影响业务逻辑）
+  try {
+    await app.register(swagger, {
+      openapi: {
+        info: {
+          title: 'Rabbit AI Backend API',
+          description: 'Rabbit AI Backend API Documentation',
+          version: '1.0.0',
+        },
+        servers: [
+          {
+            url: process.env.API_BASE_URL || 'http://localhost:8080',
+            description: 'API Server',
+          },
+        ],
+        tags: [
+          { name: 'health', description: 'Health check endpoints' },
+          { name: 'user', description: 'User related endpoints' },
+          { name: 'mining', description: 'Mining/Claiming endpoints' },
+          { name: 'asset', description: 'Asset management endpoints' },
+          { name: 'admin', description: 'Admin panel endpoints' },
+          { name: 'analytics', description: 'Analytics endpoints' },
+          { name: 'vip', description: 'VIP tier endpoints' },
+          { name: 'system', description: 'System configuration endpoints' },
+        ],
+      },
+    });
+
+    await app.register(swaggerUi, {
+      routePrefix: '/docs',
+      uiConfig: {
+        docExpansion: 'list',
+        deepLinking: true,
+      },
+      staticCSP: true,
+      transformStaticCSP: (header: string) => header,
+    });
+
+    console.log('[startup] ✅ Swagger API documentation available at /docs');
+  } catch (e) {
+    console.warn('[startup] ⚠️  Failed to register Swagger:', e);
+    // Swagger 注册失败不影响服务启动
+  }
 
   registerHealthRoutes(app);
   registerUserRoutes(app);

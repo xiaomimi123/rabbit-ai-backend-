@@ -73,8 +73,23 @@ export const RecordVisitBodySchema = z.object({
 });
 
 export const AdminVisitStatsQuerySchema = z.object({
-  startDate: z.string().datetime().optional(),
-  endDate: z.string().datetime().optional(),
+  // 🟢 修复：接受日期格式（YYYY-MM-DD）或完整的 ISO 8601 日期时间格式
+  startDate: z.string().refine(
+    (val) => {
+      if (!val) return true; // 可选字段
+      // 接受 YYYY-MM-DD 或 ISO 8601 格式
+      return /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?)?$/.test(val);
+    },
+    { message: 'Invalid date format. Expected YYYY-MM-DD or ISO 8601 datetime' }
+  ).optional(),
+  endDate: z.string().refine(
+    (val) => {
+      if (!val) return true; // 可选字段
+      // 接受 YYYY-MM-DD 或 ISO 8601 格式
+      return /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?)?$/.test(val);
+    },
+    { message: 'Invalid date format. Expected YYYY-MM-DD or ISO 8601 datetime' }
+  ).optional(),
   country: z.string().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
   offset: z.coerce.number().int().min(0).optional().default(0),
