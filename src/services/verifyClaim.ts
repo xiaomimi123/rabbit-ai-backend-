@@ -403,6 +403,15 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     }
   }
 
+  // 🟢 事件驱动同步：Claim 成功后立即同步该用户的 RAT 余额
+  try {
+    const { syncSingleUserRatBalance } = await import('./ratBalanceSync.js');
+    await syncSingleUserRatBalance(params.provider, address);
+  } catch (e) {
+    console.error('[verifyClaim] Failed to sync RAT balance after claim:', e);
+    // 不阻塞主流程，记录错误即可
+  }
+
   return {
     ok: true,
     txHash,

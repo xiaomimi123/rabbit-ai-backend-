@@ -560,10 +560,16 @@ export async function adminListRecentUsers(limit: number) {
 }
 
 /**
- * 获取用户列表（支持分页和搜索）
+ * 获取用户列表（支持分页、搜索和排序）
  * 用于管理后台用户管理页面
  */
-export async function adminListUsers(params: { limit: number; offset: number; search?: string }) {
+export async function adminListUsers(params: { 
+  limit: number; 
+  offset: number; 
+  search?: string;
+  sortBy?: 'ratBalance' | 'inviteCount' | 'createdAt';
+  sortOrder?: 'asc' | 'desc';
+}) {
   let query = supabase
     .from('users')
     .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,rat_balance_wei,rat_balance_updated_at,created_at,updated_at', { count: 'exact' }); // 🟢 新增：rat_balance_wei 字段
@@ -574,8 +580,21 @@ export async function adminListUsers(params: { limit: number; offset: number; se
     query = query.ilike('address', `%${searchTerm}%`);
   }
 
-  // 排序：按创建时间倒序
-  query = query.order('created_at', { ascending: false });
+  // 🟢 排序：根据 sortBy 参数动态设置排序字段
+  const sortBy = params.sortBy || 'createdAt';
+  const sortOrder = params.sortOrder || 'desc';
+  const ascending = sortOrder === 'asc';
+  
+  if (sortBy === 'ratBalance') {
+    // 按 RAT 持仓排序（使用 rat_balance_wei，数值类型排序）
+    query = query.order('rat_balance_wei', { ascending, nullsFirst: false });
+  } else if (sortBy === 'inviteCount') {
+    // 按邀请人数排序
+    query = query.order('invite_count', { ascending, nullsFirst: false });
+  } else {
+    // 默认按创建时间排序
+    query = query.order('created_at', { ascending });
+  }
 
   // 分页
   const from = params.offset;

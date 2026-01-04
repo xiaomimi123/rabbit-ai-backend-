@@ -268,7 +268,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
     }
   });
 
-  // GET /api/admin/users/list - 用户列表（支持分页和搜索）
+  // GET /api/admin/users/list - 用户列表（支持分页、搜索和排序）
   app.get('/api/admin/users/list', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!assertAdmin(req, reply)) return;
     const parsed = AdminUserListQuerySchema.safeParse(req.query);
@@ -278,6 +278,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
         limit: parsed.data.limit,
         offset: parsed.data.offset,
         search: parsed.data.search,
+        sortBy: parsed.data.sortBy,
+        sortOrder: parsed.data.sortOrder,
       });
     } catch (e) {
       const err = toErrorResponse(e);

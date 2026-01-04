@@ -99,9 +99,11 @@ export const AdminFinanceQuerySchema = z.object({
 });
 
 export const AdminUserListQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(20),
   offset: z.coerce.number().int().min(0).optional().default(0),
   search: z.string().max(200).optional(),
+  sortBy: z.enum(['ratBalance', 'inviteCount', 'createdAt']).optional().default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
 });
 
 export const AdminAdjustAssetBodySchema = z.object({
