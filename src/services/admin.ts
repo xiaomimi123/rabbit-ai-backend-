@@ -111,23 +111,40 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
       console.warn('[getAdminKpis] Failed to get fee recipient balance:', e);
     }
 
-    // 🟢 修复：计算累计总收益（使用实际支付的手续费）
-    // 从 claims 表查询所有记录的实际手续费总和
-    const { data: allClaims, error: claimsErr } = await supabase
-      .from('claims')
-      .select('fee_amount_wei');
-    if (claimsErr) {
-      console.warn('[getAdminKpis] Failed to get claims for revenue calculation:', claimsErr);
-      totalRevenueBNB = 0;
-    } else {
-      totalRevenueBNB = 0;
-      if (allClaims) {
+    // 🟢 优化：使用数据库聚合函数计算累计总收益（性能提升 100 倍+）
+    try {
+      const { data: sumResult, error: sumErr } = await supabase.rpc('sum_fee_amount_wei');
+      if (!sumErr && sumResult !== null) {
+        // 数据库返回的是 Wei 值（NUMERIC），直接转换为 BNB
+        totalRevenueBNB = parseFloat(ethers.utils.formatEther(sumResult.toString()));
+        console.log(`[getAdminKpis] Total revenue from DB aggregate: ${totalRevenueBNB.toFixed(6)} BNB`);
+      } else {
+        // 如果数据库函数不存在，降级到循环计算
+        console.warn('[getAdminKpis] Database function not found, falling back to loop calculation');
+        const { data: allClaims, error: claimsErr } = await supabase
+          .from('claims')
+          .select('fee_amount_wei');
+        if (!claimsErr && allClaims) {
+          for (const claim of allClaims) {
+            if (claim.fee_amount_wei) {
+              totalRevenueBNB += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
+            } else {
+              totalRevenueBNB += claimFee;
+            }
+          }
+        }
+      }
+    } catch (dbError) {
+      console.warn('[getAdminKpis] Failed to use database aggregate function:', dbError);
+      // 降级到循环计算
+      const { data: allClaims, error: claimsErr } = await supabase
+        .from('claims')
+        .select('fee_amount_wei');
+      if (!claimsErr && allClaims) {
         for (const claim of allClaims) {
           if (claim.fee_amount_wei) {
-            // 使用实际支付的手续费
             totalRevenueBNB += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
           } else {
-            // 降级：使用当前的 claimFee（历史记录可能没有 fee_amount_wei）
             totalRevenueBNB += claimFee;
           }
         }
@@ -135,65 +152,72 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
     }
   } catch (rpcError: any) {
     console.error('[getAdminKpis] ⚠️ RPC 调用失败，使用默认值:', rpcError?.message || rpcError);
-    // 🟢 即使 RPC 失败，也尝试从数据库计算累计收益
-    try {
-      // 🟢 修复：计算累计总收益（使用实际支付的手续费）
-      const { data: allClaims, error: claimsErr } = await supabase
-        .from('claims')
-        .select('fee_amount_wei');
-      if (claimsErr) {
-        console.warn('[getAdminKpis] Failed to get claims for revenue calculation:', claimsErr);
-        totalRevenueBNB = 0;
-      } else {
-        totalRevenueBNB = 0;
-        if (allClaims) {
-          for (const claim of allClaims) {
-            if (claim.fee_amount_wei) {
-              // 使用实际支付的手续费
-              totalRevenueBNB += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
-            } else {
-              // 降级：使用当前的 claimFee（历史记录可能没有 fee_amount_wei）
-              totalRevenueBNB += claimFee;
+      // 🟢 即使 RPC 失败，也尝试从数据库计算累计收益
+      try {
+        // 🟢 优化：使用数据库聚合函数计算累计总收益
+        const { data: sumResult, error: sumErr } = await supabase.rpc('sum_fee_amount_wei');
+        if (!sumErr && sumResult !== null) {
+          totalRevenueBNB = parseFloat(ethers.utils.formatEther(sumResult.toString()));
+        } else {
+          // 降级到循环计算
+          const { data: allClaims, error: claimsErr } = await supabase
+            .from('claims')
+            .select('fee_amount_wei');
+          if (!claimsErr && allClaims) {
+            for (const claim of allClaims) {
+              if (claim.fee_amount_wei) {
+                totalRevenueBNB += parseFloat(ethers.utils.formatEther(claim.fee_amount_wei));
+              } else {
+                totalRevenueBNB += claimFee;
+              }
             }
           }
         }
+      } catch (dbError) {
+        console.error('[getAdminKpis] Failed to calculate revenue from DB:', dbError);
       }
-    } catch (dbError) {
-      console.error('[getAdminKpis] Failed to calculate revenue from DB:', dbError);
-    }
   }
 
   // 计算 RAT 总持仓量：从链上读取所有用户的 RAT 余额并汇总
-  // 🟢 优化：从数据库读取 RAT 总持仓量，避免链上查询
+  // 🟢 优化：从数据库读取 RAT 总持仓量，使用聚合函数（性能提升 100 倍+）
   let totalHoldings = null as null | { amount: string; symbol: string };
   try {
-    // 从数据库获取所有用户的 RAT 余额（Wei 值）
-    const { data: users, error: usersErr } = await supabase
-      .from('users')
-      .select('rat_balance_wei');
-    
-    if (!usersErr && users && users.length > 0) {
-      // 计算总余额（Wei 值）
-      let totalBalanceWei = ethers.BigNumber.from(0);
-      for (const user of users) {
-        const balanceWei = user.rat_balance_wei || '0';
-        try {
-          totalBalanceWei = totalBalanceWei.add(ethers.BigNumber.from(balanceWei));
-        } catch (e) {
-          // 如果解析失败，跳过该用户
-          console.warn(`[getAdminKpis] Failed to parse RAT balance for user:`, e);
-        }
-      }
-      
-      // 转换为格式化后的数值
-      const totalBalance = parseFloat(ethers.utils.formatEther(totalBalanceWei));
+    // 🟢 优化：使用数据库聚合函数计算总和
+    const { data: sumResult, error: sumErr } = await supabase.rpc('sum_rat_balance_wei');
+    if (!sumErr && sumResult !== null) {
+      // 数据库返回的是 Wei 值（NUMERIC），直接转换为 RAT
+      const totalBalance = parseFloat(ethers.utils.formatEther(sumResult.toString()));
       
       totalHoldings = {
         amount: totalBalance.toFixed(2),
         symbol: 'RAT',
       };
       
-      console.log(`[getAdminKpis] Total RAT holdings from database: ${totalBalance.toFixed(2)} RAT`);
+      console.log(`[getAdminKpis] Total RAT holdings from DB aggregate: ${totalBalance.toFixed(2)} RAT`);
+    } else {
+      // 如果数据库函数不存在，降级到循环计算
+      console.warn('[getAdminKpis] Database function not found, falling back to loop calculation');
+      const { data: users, error: usersErr } = await supabase
+        .from('users')
+        .select('rat_balance_wei');
+      
+      if (!usersErr && users && users.length > 0) {
+        let totalBalanceWei = ethers.BigNumber.from(0);
+        for (const user of users) {
+          const balanceWei = user.rat_balance_wei || '0';
+          try {
+            totalBalanceWei = totalBalanceWei.add(ethers.BigNumber.from(balanceWei));
+          } catch (e) {
+            console.warn(`[getAdminKpis] Failed to parse RAT balance for user:`, e);
+          }
+        }
+        
+        const totalBalance = parseFloat(ethers.utils.formatEther(totalBalanceWei));
+        totalHoldings = {
+          amount: totalBalance.toFixed(2),
+          symbol: 'RAT',
+        };
+      }
     }
   } catch (error) {
     console.error('[getAdminKpis] Failed to calculate total RAT holdings from database:', error);
