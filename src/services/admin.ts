@@ -164,43 +164,39 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
   }
 
   // 计算 RAT 总持仓量：从链上读取所有用户的 RAT 余额并汇总
+  // 🟢 优化：从数据库读取 RAT 总持仓量，避免链上查询
   let totalHoldings = null as null | { amount: string; symbol: string };
   try {
-    // 从数据库获取所有用户地址
+    // 从数据库获取所有用户的 RAT 余额（Wei 值）
     const { data: users, error: usersErr } = await supabase
       .from('users')
-      .select('address')
-      .limit(1000); // 限制最多查询 1000 个用户，避免 RPC 调用过多
+      .select('rat_balance_wei');
     
     if (!usersErr && users && users.length > 0) {
-      const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
-      const decimals = await ratContract.decimals().catch(() => 18);
-      
-      // 批量查询余额（使用 Promise.allSettled 避免单个失败影响整体）
-      const balancePromises = users.map(async (u: any) => {
+      // 计算总余额（Wei 值）
+      let totalBalanceWei = ethers.BigNumber.from(0);
+      for (const user of users) {
+        const balanceWei = user.rat_balance_wei || '0';
         try {
-          const balanceWei = await ratContract.balanceOf(u.address);
-          return parseFloat(ethers.utils.formatUnits(balanceWei, decimals));
-        } catch {
-          return 0;
+          totalBalanceWei = totalBalanceWei.add(ethers.BigNumber.from(balanceWei));
+        } catch (e) {
+          // 如果解析失败，跳过该用户
+          console.warn(`[getAdminKpis] Failed to parse RAT balance for user:`, e);
         }
-      });
+      }
       
-      const balances = await Promise.allSettled(balancePromises);
-      const totalBalance = balances.reduce((acc, result) => {
-        if (result.status === 'fulfilled') {
-          return acc + result.value;
-        }
-        return acc;
-      }, 0);
+      // 转换为格式化后的数值
+      const totalBalance = parseFloat(ethers.utils.formatEther(totalBalanceWei));
       
       totalHoldings = {
         amount: totalBalance.toFixed(2),
         symbol: 'RAT',
       };
+      
+      console.log(`[getAdminKpis] Total RAT holdings from database: ${totalBalance.toFixed(2)} RAT`);
     }
   } catch (error) {
-    console.error('[getAdminKpis] Failed to calculate total RAT holdings:', error);
+    console.error('[getAdminKpis] Failed to calculate total RAT holdings from database:', error);
     // 失败时返回 null，不影响其他数据
   }
 
@@ -430,6 +426,15 @@ export async function completeWithdrawal(params: {
     .eq('id', params.withdrawalId);
   if (upErr) throw upErr;
 
+  // 🟢 事件驱动同步：提现成功后立即同步该用户的 RAT 余额
+  try {
+    const { syncSingleUserRatBalance } = await import('./ratBalanceSync.js');
+    await syncSingleUserRatBalance(params.provider, userAddr);
+  } catch (e) {
+    console.error('[completeWithdrawal] Failed to sync RAT balance after withdrawal:', e);
+    // 不阻塞主流程，记录错误即可
+  }
+
   return { ok: true, id: params.withdrawalId, status: 'Completed', payoutTxHash: params.payoutTxHash, verified: true };
 }
 
@@ -561,7 +566,7 @@ export async function adminListRecentUsers(limit: number) {
 export async function adminListUsers(params: { limit: number; offset: number; search?: string }) {
   let query = supabase
     .from('users')
-    .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,created_at,updated_at', { count: 'exact' });
+    .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,rat_balance_wei,rat_balance_updated_at,created_at,updated_at', { count: 'exact' }); // 🟢 新增：rat_balance_wei 字段
 
   // 搜索功能：如果提供了搜索词，按地址搜索
   if (params.search && params.search.trim()) {
@@ -582,16 +587,31 @@ export async function adminListUsers(params: { limit: number; offset: number; se
 
   return {
     ok: true,
-    items: (data || []).map((r: any) => ({
-      address: r.address,
-      energyTotal: Number(r.energy_total || 0),
-      energyLocked: Number(r.energy_locked || 0),
-      inviteCount: Number(r.invite_count || 0),
-      referrer: r.referrer_address || null,
-      registeredAt: r.created_at,
-      lastActive: r.updated_at,
-      usdtBalance: Number(r.usdt_total || 0) - Number(r.usdt_locked || 0), // 可提现余额
-    })),
+    items: (data || []).map((r: any) => {
+      // 🟢 将 Wei 值转换为格式化后的数值（用于前端显示）
+      const ratBalanceWei = r.rat_balance_wei || '0';
+      let ratBalance = 0;
+      try {
+        ratBalance = parseFloat(ethers.utils.formatEther(ratBalanceWei));
+      } catch (e) {
+        console.warn(`[adminListUsers] Failed to format RAT balance for ${r.address}:`, e);
+        ratBalance = 0;
+      }
+      
+      return {
+        address: r.address,
+        energyTotal: Number(r.energy_total || 0),
+        energyLocked: Number(r.energy_locked || 0),
+        inviteCount: Number(r.invite_count || 0),
+        referrer: r.referrer_address || null,
+        registeredAt: r.created_at,
+        lastActive: r.updated_at,
+        usdtBalance: Number(r.usdt_total || 0) - Number(r.usdt_locked || 0), // 可提现余额
+        ratBalance: ratBalance, // 🟢 新增：RAT 余额（格式化后的值）
+        ratBalanceWei: ratBalanceWei, // 🟢 新增：Wei 值（用于精确计算）
+        ratBalanceUpdatedAt: r.rat_balance_updated_at, // 🟢 新增：更新时间
+      };
+    }),
     total: count || 0,
   };
 }
@@ -702,55 +722,54 @@ export async function adminGetUserTeam(address: string) {
 
 /**
  * 获取 RAT 持币大户排行（Top Holders）
- * 从数据库获取所有用户，然后从链上读取他们的 RAT 余额，按余额排序
+ * 🟢 优化：从数据库读取 RAT 余额，避免链上查询，提升响应速度
  */
 export async function getTopRATHolders(provider: ethers.providers.Provider, limit: number = 5) {
-  // 从数据库获取所有用户地址
-  const { data: users, error } = await supabase
-    .from('users')
-    .select('address')
-    .limit(100); // 限制查询数量，避免 RPC 调用过多
-  if (error) throw error;
+  try {
+    // 从数据库获取所有用户的地址和 RAT 余额（Wei 值）
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('address, rat_balance_wei')
+      .not('rat_balance_wei', 'is', null); // 只查询有余额记录的用户
+    
+    if (error) throw error;
 
-  if (!users || users.length === 0) {
-    return { ok: true, items: [] };
-  }
+    if (!users || users.length === 0) {
+      return { ok: true, items: [] };
+    }
 
-  // 从链上读取每个用户的 RAT 余额
-  const ratContract = new ethers.Contract(config.ratTokenContract, ERC20_ABI, provider);
-  const decimals = await ratContract.decimals().catch(() => 18);
-
-  const balances = await Promise.all(
-    users.map(async (user: any) => {
-      try {
-        const balanceWei = await ratContract.balanceOf(user.address);
-        const balance = parseFloat(ethers.utils.formatUnits(balanceWei, decimals));
+    // 将 Wei 值转换为格式化后的数值，并排序
+    const holders = users
+      .map((user: any) => {
+        const balanceWei = user.rat_balance_wei || '0';
+        let balance = 0;
+        try {
+          balance = parseFloat(ethers.utils.formatEther(balanceWei));
+        } catch (e) {
+          console.warn(`[getTopRATHolders] Failed to format RAT balance for ${user.address}:`, e);
+          balance = 0;
+        }
         return {
           address: user.address,
           balance,
         };
-      } catch (err) {
-        // 如果读取失败，返回余额 0
-        return {
-          address: user.address,
-          balance: 0,
-        };
-      }
-    })
-  );
+      })
+      .filter((item) => item.balance > 0) // 过滤掉余额为 0 的用户
+      .sort((a, b) => b.balance - a.balance) // 按余额降序排序
+      .slice(0, limit) // 取前 N 名
+      .map((item, index) => ({
+        rank: index + 1,
+        address: item.address,
+        balance: item.balance,
+      }));
 
-  // 按余额排序，取前 N 名
-  const topHolders = balances
-    .filter((item) => item.balance > 0)
-    .sort((a, b) => b.balance - a.balance)
-    .slice(0, limit)
-    .map((item, index) => ({
-      rank: index + 1,
-      address: item.address,
-      balance: item.balance,
-    }));
-
-  return { ok: true, items: topHolders };
+    console.log(`[getTopRATHolders] Found ${holders.length} top holders from database`);
+    return { ok: true, items: holders };
+  } catch (e: any) {
+    console.error('[getTopRATHolders] Failed to get top RAT holders from database:', e);
+    // 失败时返回空数组，不影响其他功能
+    return { ok: true, items: [] };
+  }
 }
 
 /**
