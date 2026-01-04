@@ -15,7 +15,7 @@
     "dotenv": "^17.2.3",
     "ethers": "^5.7.2",
     "fastify": "^5.2.1",
-    "maxmind": "^5.1.1",
+    "maxmind": "^5.0.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
