@@ -1,11 +1,53 @@
 import { supabase } from '../infra/supabase.js';
 import { ethers } from 'ethers';
+import { config } from '../config.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // IP 地理位置接口
 interface GeoLocation {
   country?: string | null;
   countryCode?: string | null;
   city?: string | null;
+}
+
+// 🟢 新增：MaxMind GeoLite2 数据库读取器（懒加载）
+let geoipReader: any = null;
+let geoipReaderError: Error | null = null;
+
+async function initGeoIPReader(): Promise<any> {
+  // 如果已经初始化过且失败，直接返回 null
+  if (geoipReaderError) {
+    return null;
+  }
+
+  // 如果已经初始化成功，直接返回
+  if (geoipReader) {
+    return geoipReader;
+  }
+
+  try {
+    // 检查数据库文件是否存在
+    const dbPath = path.resolve(config.maxmindDbPath);
+    if (!fs.existsSync(dbPath)) {
+      console.error(`[Analytics] ❌ GeoLite2 database not found at ${dbPath}. Please ensure the database file is present.`);
+      geoipReaderError = new Error('Database file not found');
+      return null;
+    }
+
+    // 动态导入 maxmind（避免在文件不存在时崩溃）
+    // @ts-ignore - maxmind 类型定义可能不完整
+    const maxmind = await import('maxmind');
+    const lookup = await maxmind.open(dbPath);
+    
+    console.log(`[Analytics] ✅ GeoLite2 database loaded successfully from ${dbPath}`);
+    geoipReader = lookup;
+    return lookup;
+  } catch (error: any) {
+    console.error(`[Analytics] ❌ Failed to load GeoLite2 database: ${error?.message || error}`);
+    geoipReaderError = error;
+    return null;
+  }
 }
 
 // 🟢 修复4: 获取客户端真实 IP 地址（支持 Cloudflare + Vercel）
@@ -167,96 +209,56 @@ async function saveGeoLocationToCache(ip: string, geo: GeoLocation): Promise<voi
   }
 }
 
-// 使用免费 IP 地理位置 API 获取国家信息（带缓存）
+// 🟢 使用 MaxMind GeoLite2 离线数据库查询 IP 地理位置
+async function getGeoLocationFromGeoLite2(ip: string): Promise<GeoLocation | null> {
+  try {
+    const lookup = await initGeoIPReader();
+    if (!lookup) {
+      console.warn(`[Analytics] ⚠️ GeoLite2 database not available for IP ${ip}`);
+      return null; // 数据库未加载
+    }
+
+    const result = lookup.get(ip);
+    if (!result) {
+      console.debug(`[Analytics] IP ${ip} not found in GeoLite2 database`);
+      return null; // IP 地址未找到
+    }
+
+    const geo: GeoLocation = {
+      country: result.country?.names?.en || result.country?.names?.['zh-CN'] || null,
+      countryCode: result.country?.iso_code || null,
+      city: result.city?.names?.en || result.city?.names?.['zh-CN'] || null,
+    };
+
+    // 保存到缓存（提高后续查询性能）
+    await saveGeoLocationToCache(ip, geo);
+    
+    return geo;
+  } catch (error: any) {
+    console.warn(`[Analytics] GeoLite2 lookup failed for IP ${ip}:`, error?.message || error);
+    return null;
+  }
+}
+
+// 🟢 使用 MaxMind GeoLite2 离线数据库获取 IP 地理位置（已移除所有在线 API 调用）
 async function getGeoLocation(ip: string): Promise<GeoLocation> {
-  // 🟢 修复1: 先从缓存查询
+  // 1. 先从缓存查询（最快）
   const cached = await getGeoLocationFromCache(ip);
   if (cached) {
     console.log(`[Analytics] ✅ Using cached geo location for IP ${ip}`);
     return cached;
   }
 
-  // 缓存未命中，调用 API
-  try {
-    // 使用 ipapi.co 免费 API（每月 1000 次请求）
-    // ⚠️ 注意：由于有缓存，实际调用次数会大幅减少
-    const response = await fetch(`https://ipapi.co/${ip}/json/`, {
-      headers: {
-        'User-Agent': 'RabbitAI-Backend/1.0'
-      },
-      // 🟢 添加超时保护（5秒）
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!response.ok) {
-      // 429 表示额度用完，记录警告但不抛出错误
-      if (response.status === 429) {
-        console.error(`[Analytics] ⚠️ IP API rate limit exceeded (429) for ${ip}. Consider upgrading to paid plan or using offline GeoIP database.`);
-        return {};
-      }
-      throw new Error(`IP API returned ${response.status}`);
-    }
-
-    const data = await response.json() as {
-      country_name?: string;
-      country_code?: string;
-      city?: string;
-    };
-    
-    const geo: GeoLocation = {
-      country: data.country_name || null,
-      countryCode: data.country_code || null,
-      city: data.city || null,
-    };
-
-    // 🟢 修复1: 保存到缓存
-    await saveGeoLocationToCache(ip, geo);
-    
-    return geo;
-  } catch (error: any) {
-    // 超时或网络错误
-    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-      console.warn(`[Analytics] IP API timeout for ${ip}, skipping fallback`);
-      return {};
-    }
-
-    console.warn(`[Analytics] Failed to get geo location for IP ${ip}:`, error?.message || error);
-    
-    // ⚠️ 注意：ip-api.com 免费版不支持 HTTPS，且可能不稳定
-    // 如果主服务失败，尝试备用服务（但不推荐长期使用）
-    try {
-      const fallbackResponse = await fetch(`https://ip-api.com/json/${ip}?fields=status,country,countryCode,city`, {
-        headers: {
-          'User-Agent': 'RabbitAI-Backend/1.0'
-        },
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (fallbackResponse.ok) {
-        const fallbackData = await fallbackResponse.json() as {
-          status?: string;
-          country?: string;
-          countryCode?: string;
-          city?: string;
-        };
-        if (fallbackData.status === 'success') {
-          const geo: GeoLocation = {
-            country: fallbackData.country || null,
-            countryCode: fallbackData.countryCode || null,
-            city: fallbackData.city || null,
-          };
-          // 保存到缓存
-          await saveGeoLocationToCache(ip, geo);
-          return geo;
-        }
-      }
-    } catch (fallbackError) {
-      console.warn(`[Analytics] Fallback IP API also failed:`, fallbackError);
-    }
-
-    // 如果所有 API 都失败，返回空值（不影响主流程）
-    return {};
+  // 2. 使用 GeoLite2 离线数据库查询
+  const geoLite2Result = await getGeoLocationFromGeoLite2(ip);
+  if (geoLite2Result) {
+    console.log(`[Analytics] ✅ Using GeoLite2 database for IP ${ip}`);
+    return geoLite2Result;
   }
+
+  // 3. 如果数据库不可用或 IP 未找到，返回空值（不影响主流程）
+  console.warn(`[Analytics] ⚠️ Unable to get geo location for IP ${ip} (database unavailable or IP not found)`);
+  return {};
 }
 
 // 记录页面访问

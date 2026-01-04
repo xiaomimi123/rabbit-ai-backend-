@@ -16,4 +16,10 @@ pnpm-debug.log*
 .vscode/
 .idea/
 
+# MaxMind GeoLite2 数据库文件（文件较大，不需要版本控制）
+data/GeoLite2-City.mmdb
+data/GeoLite2-City.mmdb.*
+data/*.mmdb
+data/temp/
+
 

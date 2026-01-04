@@ -79,6 +79,11 @@ export const config = {
   analyticsCleanupDays: optionalInt('ANALYTICS_CLEANUP_DAYS', 90), // 默认保留 90 天
   analyticsCleanupEnabled: process.env.ANALYTICS_CLEANUP_ENABLED === 'true', // 默认关闭，需要手动启用
   analyticsCleanupIntervalHours: optionalInt('ANALYTICS_CLEANUP_INTERVAL_HOURS', 24), // 默认每 24 小时执行一次
+
+  // 🟢 新增：MaxMind GeoLite2 配置
+  maxmindLicenseKey: optionalStr('MAXMIND_LICENSE_KEY'), // MaxMind License Key（用于自动下载数据库）
+  maxmindDbPath: optionalStr('MAXMIND_DB_PATH', './data/GeoLite2-City.mmdb'), // 数据库文件路径
+  maxmindAutoUpdate: process.env.MAXMIND_AUTO_UPDATE === 'true', // 是否启用自动更新
 };
 
 if (config.rpcUrls.length === 0) {
