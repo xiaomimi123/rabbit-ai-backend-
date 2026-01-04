@@ -27,31 +27,61 @@ const GEOLITE2_DOWNLOAD_URL = 'https://download.maxmind.com/app/geoip_download?e
 
 async function downloadFile(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    
-    https.get(url, (response) => {
-      if (response.statusCode === 200) {
-        response.pipe(file);
-        file.on('finish', () => {
+    const download = (downloadUrl: string): void => {
+      const file = fs.createWriteStream(dest);
+      
+      https.get(downloadUrl, (response) => {
+        // 处理重定向（302, 301, 307, 308）
+        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
+          const location = response.headers.location;
+          if (location) {
+            console.log(`🔄 Following redirect to: ${location}`);
+            file.close();
+            if (fs.existsSync(dest)) {
+              fs.unlinkSync(dest);
+            }
+            // 递归下载重定向的 URL
+            download(location);
+            return;
+          } else {
+            file.close();
+            if (fs.existsSync(dest)) {
+              fs.unlinkSync(dest);
+            }
+            reject(new Error(`Redirect without location header (status ${response.statusCode})`));
+            return;
+          }
+        }
+        
+        if (response.statusCode === 200) {
+          response.pipe(file);
+          file.on('finish', () => {
+            file.close();
+            resolve();
+          });
+        } else if (response.statusCode === 401) {
           file.close();
-          resolve();
-        });
-      } else if (response.statusCode === 401) {
+          if (fs.existsSync(dest)) {
+            fs.unlinkSync(dest);
+          }
+          reject(new Error('Invalid license key. Please check your MAXMIND_LICENSE_KEY.'));
+        } else {
+          file.close();
+          if (fs.existsSync(dest)) {
+            fs.unlinkSync(dest);
+          }
+          reject(new Error(`Download failed with status code ${response.statusCode}`));
+        }
+      }).on('error', (err) => {
         file.close();
-        fs.unlinkSync(dest);
-        reject(new Error('Invalid license key. Please check your MAXMIND_LICENSE_KEY.'));
-      } else {
-        file.close();
-        fs.unlinkSync(dest);
-        reject(new Error(`Download failed with status code ${response.statusCode}`));
-      }
-    }).on('error', (err) => {
-      file.close();
-      if (fs.existsSync(dest)) {
-        fs.unlinkSync(dest);
-      }
-      reject(err);
-    });
+        if (fs.existsSync(dest)) {
+          fs.unlinkSync(dest);
+        }
+        reject(err);
+      });
+    };
+    
+    download(url);
   });
 }
 
