@@ -32,11 +32,12 @@ export function createServer(deps: {
     app.addHook('onResponse', (request, reply, done) => {
       // 只记录错误响应（4xx, 5xx），不记录成功请求（2xx, 3xx）
       if (reply.statusCode >= 400) {
+        const responseTime = reply.elapsedTime || 0;
         app.log.warn({
           method: request.method,
           url: request.url,
           statusCode: reply.statusCode,
-          responseTime: reply.getResponseTime(),
+          responseTime: `${responseTime.toFixed(2)}ms`,
         }, 'Request error');
       }
       done();
