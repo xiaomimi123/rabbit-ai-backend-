@@ -133,7 +133,7 @@ export const AdminAdjustAssetBodySchema = z.object({
 export const AdminOperationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
   offset: z.coerce.number().int().min(0).optional().default(0),
-  type: z.enum(['all', 'Withdrawal', 'AirdropClaim']).optional().default('all'),
+  type: z.enum(['all', 'Withdrawal', 'AirdropClaim', 'AddUSDT', 'DeductUSDT', 'AddEnergy', 'DeductEnergy']).optional().default('all'),
   address: AddressSchema.optional(),
 });
 
