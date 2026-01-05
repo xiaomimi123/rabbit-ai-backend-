@@ -33,7 +33,36 @@ function getPort(): number {
   return port;
 }
 
-export const config = {
+// 🟢 修复：显式定义 config 类型，确保 TypeScript 能正确识别所有属性
+export const config: {
+  port: number;
+  nodeEnv: string;
+  supabaseUrl: string;
+  supabaseServiceRoleKey: string;
+  rpcUrls: string[];
+  adminRpcUrl: string;
+  airdropContract: string;
+  confirmations: number;
+  batchBlocks: number;
+  pollIntervalMs: number;
+  chainSyncId: string;
+  ratTokenContract: string;
+  usdtContract: string;
+  adminPayoutAddress: string;
+  withdrawAlertThreshold: number;
+  corsOrigins: string;
+  jwtSecret: string;
+  adminApiKey: string;
+  analyticsCleanupDays: number;
+  analyticsCleanupEnabled: boolean;
+  analyticsCleanupIntervalHours: number;
+  maxmindLicenseKey: string;
+  maxmindDbPath: string;
+  maxmindAutoUpdate: boolean;
+  sentryDsn: string;
+  sentryEnvironment: string;
+  sentryEnabled: boolean;
+} = {
   port: getPort(),
   nodeEnv: process.env.NODE_ENV || 'development',
 
@@ -84,6 +113,11 @@ export const config = {
   maxmindLicenseKey: optionalStr('MAXMIND_LICENSE_KEY'), // MaxMind License Key（用于自动下载数据库）
   maxmindDbPath: optionalStr('MAXMIND_DB_PATH', './data/GeoLite2-City.mmdb'), // 数据库文件路径
   maxmindAutoUpdate: process.env.MAXMIND_AUTO_UPDATE === 'true', // 是否启用自动更新
+
+  // 🟢 新增：Sentry 错误监控配置（可选）
+  sentryDsn: optionalStr('SENTRY_DSN'), // Sentry DSN（用于错误监控）
+  sentryEnvironment: optionalStr('SENTRY_ENVIRONMENT', process.env.NODE_ENV || 'development'), // Sentry 环境标识
+  sentryEnabled: process.env.SENTRY_ENABLED !== 'false', // 是否启用 Sentry（默认启用，如果配置了 DSN）
 };
 
 if (config.rpcUrls.length === 0) {
