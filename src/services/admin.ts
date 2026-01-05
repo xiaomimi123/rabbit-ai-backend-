@@ -433,13 +433,16 @@ export async function completeWithdrawal(params: {
   // Update DB: withdrawal completed + adjust energy + adjust usdt
   // ✅ 修复：使用 energy_locked_amount 而不是 amount 来扣除能量
   // 因为 1 USDT = 10 Energy，所以扣除能量应该使用实际锁定的能量值
+  // 🟢 关键修复：usdt_total 不应该在 completeWithdrawal 时再次扣除
+  // 原因：usdt_total 在用户申请提现时（applyWithdraw）已经正确更新为 realTimeEarnings - amount
+  // completeWithdrawal 只需要释放 usdt_locked，不应该修改 usdt_total
   const u = await getUserEnergyRow(userAddr);
   const amtNum = Number(amount);
 
   const nextEnergyLocked = Math.max(0, u.energyLocked - energyLockedAmount);
   const nextEnergyTotal = Math.max(0, u.energyTotal - energyLockedAmount);
   const nextUsdtLocked = Math.max(0, u.usdtLocked - amtNum);
-  const nextUsdtTotal = Math.max(0, u.usdtTotal - amtNum);
+  const nextUsdtTotal = u.usdtTotal; // 🟢 修复：保持不变，不扣除（已在 applyWithdraw 时扣除）
 
   await updateUserBalances(
     userAddr,
