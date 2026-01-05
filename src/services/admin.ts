@@ -612,11 +612,93 @@ export async function adminListUsers(params: {
   const sortOrder = params.sortOrder || 'desc';
   const ascending = sortOrder === 'asc';
   
+  // 🟢 修复：rat_balance_wei 是 TEXT 类型，需要特殊处理
   if (sortBy === 'ratBalance') {
-    // 按 RAT 持仓排序（使用 rat_balance_wei，数值类型排序）
-    query = query.order('rat_balance_wei', { ascending, nullsFirst: false });
+    // 按 RAT 持仓排序：需要先查询所有数据（或足够多的数据），然后在内存中按数值排序
+    // 因为 rat_balance_wei 是 TEXT 类型，不能直接按数值排序
+    // ⚠️ 注意：对于大数据量，这会影响性能，后续可以优化为使用数据库 RPC 函数
+    
+    // 先查询总数
+    const countQuery = supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true });
+    if (params.search && params.search.trim()) {
+      const searchTerm = params.search.trim().toLowerCase();
+      countQuery.ilike('address', `%${searchTerm}%`);
+    }
+    const { count, error: countError } = await countQuery;
+    if (countError) throw countError;
+    
+    // 查询所有数据（或足够多的数据）进行排序
+    // 为了性能，限制最大查询数量为 10000 条
+    const maxQuerySize = 10000;
+    let dataQuery = supabase
+      .from('users')
+      .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,rat_balance_wei,rat_balance_updated_at,created_at,updated_at');
+    
+    if (params.search && params.search.trim()) {
+      const searchTerm = params.search.trim().toLowerCase();
+      dataQuery = dataQuery.ilike('address', `%${searchTerm}%`);
+    }
+    
+    // 限制查询数量，避免性能问题
+    const queryLimit = Math.min(count || maxQuerySize, maxQuerySize);
+    dataQuery = dataQuery.limit(queryLimit);
+    
+    const { data: allData, error: queryError } = await dataQuery;
+    if (queryError) throw queryError;
+    
+    // 🟢 在内存中按数值排序
+    const sortedData = (allData || []).map((r: any) => {
+      const ratBalanceWei = r.rat_balance_wei || '0';
+      let ratBalanceNum = 0;
+      try {
+        ratBalanceNum = parseFloat(ethers.utils.formatEther(ratBalanceWei));
+      } catch (e) {
+        ratBalanceNum = 0;
+      }
+      return { ...r, _ratBalanceNum: ratBalanceNum };
+    }).sort((a, b) => {
+      if (ascending) {
+        return a._ratBalanceNum - b._ratBalanceNum;
+      } else {
+        return b._ratBalanceNum - a._ratBalanceNum;
+      }
+    });
+    
+    // 应用分页
+    const paginatedData = sortedData.slice(params.offset, params.offset + params.limit);
+    
+    return {
+      ok: true,
+      items: paginatedData.map((r: any) => {
+        const ratBalanceWei = r.rat_balance_wei || '0';
+        let ratBalance = 0;
+        try {
+          ratBalance = parseFloat(ethers.utils.formatEther(ratBalanceWei));
+        } catch (e) {
+          console.warn(`[adminListUsers] Failed to format RAT balance for ${r.address}:`, e);
+          ratBalance = 0;
+        }
+        
+        return {
+          address: r.address,
+          energyTotal: Number(r.energy_total || 0),
+          energyLocked: Number(r.energy_locked || 0),
+          inviteCount: Number(r.invite_count || 0),
+          referrer: r.referrer_address || null,
+          registeredAt: r.created_at,
+          lastActive: r.updated_at,
+          usdtBalance: Number(r.usdt_total || 0) - Number(r.usdt_locked || 0),
+          ratBalance: ratBalance,
+          ratBalanceWei: ratBalanceWei,
+          ratBalanceUpdatedAt: r.rat_balance_updated_at,
+        };
+      }),
+      total: count || 0,
+    };
   } else if (sortBy === 'inviteCount') {
-    // 按邀请人数排序
+    // 按邀请人数排序（应该是数值类型，可以直接排序）
     query = query.order('invite_count', { ascending, nullsFirst: false });
   } else {
     // 默认按创建时间排序
