@@ -981,6 +981,18 @@ export async function adminAdjustUserEnergy(address: string, delta: number) {
     u.createdAt
   );
 
+  // 🟢 新增：记录管理员操作
+  const operationType = delta > 0 ? 'AddEnergy' : 'DeductEnergy';
+  await supabase.from('admin_operations').insert({
+    address: addr,
+    operation_type: operationType,
+    amount: delta,
+    amount_before: u.energyTotal,
+    amount_after: nextTotal,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
   return {
     ok: true,
     address: addr,
@@ -1008,6 +1020,18 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
     u.createdAt,
     true // 🟢 关键：更新 last_settlement_time，确保增量收益从当前时间开始计算
   );
+
+  // 🟢 新增：记录管理员操作
+  const operationType = delta > 0 ? 'AddUSDT' : 'DeductUSDT';
+  await supabase.from('admin_operations').insert({
+    address: addr,
+    operation_type: operationType,
+    amount: delta,
+    amount_before: u.usdtTotal,
+    amount_after: nextTotal,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
 
   return {
     ok: true,
@@ -1180,12 +1204,12 @@ export async function getFinanceExpenses(page: number, pageSize: number) {
 }
 
 /**
- * 获取操作记录（提现和空投领取）
+ * 获取操作记录（提现、空投领取、管理员操作）
  */
 export async function getAdminOperations(params: {
   limit?: number;
   offset?: number;
-  type?: 'all' | 'Withdrawal' | 'AirdropClaim';
+  type?: 'all' | 'Withdrawal' | 'AirdropClaim' | 'AddUSDT' | 'DeductUSDT' | 'AddEnergy' | 'DeductEnergy';
   address?: string;
 }) {
   const limit = params.limit || 100;
@@ -1193,7 +1217,7 @@ export async function getAdminOperations(params: {
   const type = params.type || 'all';
   const address = params.address ? lower(params.address) : null;
 
-  // 合并 withdrawals 和 claims 表的数据
+  // 合并 withdrawals、claims 和 admin_operations 表的数据
   const operations: any[] = [];
 
   // 1. 获取提现记录
@@ -1252,6 +1276,40 @@ export async function getAdminOperations(params: {
     });
   }
 
+  // 3. 获取管理员操作记录
+  const adminOpTypes = ['AddUSDT', 'DeductUSDT', 'AddEnergy', 'DeductEnergy'];
+  if (type === 'all' || adminOpTypes.includes(type)) {
+    let adminQuery = supabase
+      .from('admin_operations')
+      .select('id,address,operation_type,amount,amount_before,amount_after,created_at')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (address) {
+      adminQuery = adminQuery.eq('address', address);
+    }
+
+    if (type !== 'all') {
+      adminQuery = adminQuery.eq('operation_type', type);
+    }
+
+    const { data: adminOps, error: aErr } = await adminQuery;
+    if (aErr) throw aErr;
+
+    (adminOps || []).forEach((a: any) => {
+      operations.push({
+        id: a.id,
+        address: a.address,
+        type: a.operation_type,
+        amount: String(Math.abs(a.amount)), // 显示绝对值
+        status: 'Success',
+        timestamp: a.created_at,
+        amountBefore: String(a.amount_before),
+        amountAfter: String(a.amount_after),
+      });
+    });
+  }
+
   // 按时间戳排序（最新的在前）
   operations.sort((a, b) => {
     return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
@@ -1266,7 +1324,10 @@ export async function getAdminOperations(params: {
     const { count: cCount } = await supabase
       .from('claims')
       .select('*', { count: 'exact', head: true });
-    totalCount = (wCount || 0) + (cCount || 0);
+    const { count: aCount } = await supabase
+      .from('admin_operations')
+      .select('*', { count: 'exact', head: true });
+    totalCount = (wCount || 0) + (cCount || 0) + (aCount || 0);
   } else if (type === 'Withdrawal') {
     const { count } = await supabase
       .from('withdrawals')
@@ -1276,6 +1337,12 @@ export async function getAdminOperations(params: {
     const { count } = await supabase
       .from('claims')
       .select('*', { count: 'exact', head: true });
+    totalCount = count || 0;
+  } else if (adminOpTypes.includes(type)) {
+    const { count } = await supabase
+      .from('admin_operations')
+      .select('*', { count: 'exact', head: true })
+      .eq('operation_type', type);
     totalCount = count || 0;
   }
 
