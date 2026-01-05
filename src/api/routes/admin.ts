@@ -165,8 +165,21 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
     if (!assertAdmin(req, reply)) return;
     const addrParsed = AddressSchema.safeParse(String((req.params as any)?.address || '').toLowerCase());
     if (!addrParsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: addrParsed.error.message });
+    
+    // 🟢 解析分页参数
+    const limit = Number((req.query as any)?.limit || 50);
+    const offset = Number((req.query as any)?.offset || 0);
+    
+    // 验证参数
+    if (limit < 1 || limit > 200) {
+      return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: 'limit must be between 1 and 200' });
+    }
+    if (offset < 0) {
+      return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: 'offset must be >= 0' });
+    }
+    
     try {
-      return await adminGetUserTeam(addrParsed.data);
+      return await adminGetUserTeam(addrParsed.data, { limit, offset });
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);

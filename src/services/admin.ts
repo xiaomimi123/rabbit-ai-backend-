@@ -687,9 +687,15 @@ export async function adminListRecentClaims(limit: number) {
 /**
  * 获取用户团队关系（上级、下级）
  * 用于管理后台团队关系查询页面
+ * 🟢 优化：支持分页查询，可以查看所有团队成员
  */
-export async function adminGetUserTeam(address: string) {
+export async function adminGetUserTeam(
+  address: string,
+  options?: { limit?: number; offset?: number }
+) {
   const addr = lower(address);
+  const limit = options?.limit || 50; // 默认每页 50 条
+  const offset = options?.offset || 0;
 
   // 1. 查询目标用户信息
   const { data: targetUser, error: targetErr } = await supabase
@@ -741,13 +747,13 @@ export async function adminGetUserTeam(address: string) {
     }
   }
 
-  // 3. 查询下级（被推荐人列表，最多50个，按邀请数倒序）
-  const { data: downlineUsers, error: downlineErr } = await supabase
+  // 3. 查询下级（被推荐人列表，支持分页，按邀请数倒序）
+  const { data: downlineUsers, error: downlineErr, count } = await supabase
     .from('users')
-    .select('address,energy_total,invite_count,created_at')
+    .select('address,energy_total,invite_count,created_at', { count: 'exact' })
     .eq('referrer_address', addr)
     .order('invite_count', { ascending: false })
-    .limit(50);
+    .range(offset, offset + limit - 1); // 🟢 使用 range 实现分页
 
   if (downlineErr) throw downlineErr;
 
@@ -763,6 +769,7 @@ export async function adminGetUserTeam(address: string) {
     target,
     upline,
     downline,
+    total: count || 0, // 🟢 返回总数，用于前端分页
   };
 }
 
