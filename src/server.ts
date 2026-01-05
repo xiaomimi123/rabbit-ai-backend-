@@ -1,7 +1,5 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import swagger from '@fastify/swagger';
-import swaggerUi from '@fastify/swagger-ui';
 import { registerHealthRoutes } from './api/routes/health.js';
 import { registerUserRoutes } from './api/routes/user.js';
 import { registerMiningRoutes } from './api/routes/mining.js';
@@ -94,8 +92,12 @@ export async function createServer(deps: {
   app.register(cors, { origin });
 
   // 🟢 新增：Swagger API 文档（零风险，只生成文档，不影响业务逻辑）
+  // 使用动态导入，避免在依赖未安装时崩溃
   try {
-    await app.register(swagger, {
+    const swagger = await import('@fastify/swagger');
+    const swaggerUi = await import('@fastify/swagger-ui');
+    
+    await app.register(swagger.default, {
       openapi: {
         info: {
           title: 'Rabbit AI Backend API',
@@ -121,7 +123,7 @@ export async function createServer(deps: {
       },
     });
 
-    await app.register(swaggerUi, {
+    await app.register(swaggerUi.default, {
       routePrefix: '/docs',
       uiConfig: {
         docExpansion: 'list',
@@ -132,8 +134,8 @@ export async function createServer(deps: {
     });
 
     console.log('[startup] ✅ Swagger API documentation available at /docs');
-  } catch (e) {
-    console.warn('[startup] ⚠️  Failed to register Swagger:', e);
+  } catch (e: any) {
+    console.warn('[startup] ⚠️  Failed to register Swagger:', e?.message || e);
     // Swagger 注册失败不影响服务启动
   }
 

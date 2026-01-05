@@ -22,7 +22,7 @@ async function initSentry() {
       // 采样率：100% 的错误都上报（推广阶段需要全面监控）
       sampleRate: 1.0,
       // 过滤已知错误（避免上报过多噪音）
-      beforeSend(event, hint) {
+      beforeSend(event: any, hint: any) {
         // 过滤掉数据库函数检查时的预期错误
         const error = hint.originalException;
         if (error && typeof error === 'object' && 'message' in error) {
