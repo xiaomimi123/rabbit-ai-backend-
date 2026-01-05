@@ -1391,6 +1391,7 @@ export async function getAdminExpensesWithDateRange(params: {
       payoutTxHash: r.payout_tx_hash,
     })),
     total: totalExpense,
+    totalCount: count || 0, // 🟢 新增：返回总记录数
   };
 }
 
