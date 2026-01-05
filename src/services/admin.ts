@@ -597,81 +597,32 @@ export async function adminListUsers(params: {
   sortBy?: 'ratBalance' | 'inviteCount' | 'createdAt';
   sortOrder?: 'asc' | 'desc';
 }) {
-  let query = supabase
-    .from('users')
-    .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,rat_balance_wei,rat_balance_updated_at,created_at,updated_at', { count: 'exact' }); // 🟢 新增：rat_balance_wei 字段
-
-  // 搜索功能：如果提供了搜索词，按地址搜索
-  if (params.search && params.search.trim()) {
-    const searchTerm = params.search.trim().toLowerCase();
-    query = query.ilike('address', `%${searchTerm}%`);
-  }
-
-  // 🟢 排序：根据 sortBy 参数动态设置排序字段
+  // 🟢 优化：使用数据库 RPC 函数进行排序，支持 TEXT 类型的数值排序
+  // 这样可以避免内存排序的性能问题，特别是在大数据量场景下
   const sortBy = params.sortBy || 'createdAt';
   const sortOrder = params.sortOrder || 'desc';
-  const ascending = sortOrder === 'asc';
   
-  // 🟢 修复：rat_balance_wei 是 TEXT 类型，需要特殊处理
-  if (sortBy === 'ratBalance') {
-    // 按 RAT 持仓排序：需要先查询所有数据（或足够多的数据），然后在内存中按数值排序
-    // 因为 rat_balance_wei 是 TEXT 类型，不能直接按数值排序
-    // ⚠️ 注意：对于大数据量，这会影响性能，后续可以优化为使用数据库 RPC 函数
-    
-    // 先查询总数
-    const countQuery = supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true });
-    if (params.search && params.search.trim()) {
-      const searchTerm = params.search.trim().toLowerCase();
-      countQuery.ilike('address', `%${searchTerm}%`);
-    }
-    const { count, error: countError } = await countQuery;
-    if (countError) throw countError;
-    
-    // 查询所有数据（或足够多的数据）进行排序
-    // 为了性能，限制最大查询数量为 10000 条
-    const maxQuerySize = 10000;
-    let dataQuery = supabase
-      .from('users')
-      .select('address,referrer_address,invite_count,energy_total,energy_locked,usdt_total,usdt_locked,rat_balance_wei,rat_balance_updated_at,created_at,updated_at');
-    
-    if (params.search && params.search.trim()) {
-      const searchTerm = params.search.trim().toLowerCase();
-      dataQuery = dataQuery.ilike('address', `%${searchTerm}%`);
-    }
-    
-    // 限制查询数量，避免性能问题
-    const queryLimit = Math.min(count || maxQuerySize, maxQuerySize);
-    dataQuery = dataQuery.limit(queryLimit);
-    
-    const { data: allData, error: queryError } = await dataQuery;
-    if (queryError) throw queryError;
-    
-    // 🟢 在内存中按数值排序
-    const sortedData = (allData || []).map((r: any) => {
-      const ratBalanceWei = r.rat_balance_wei || '0';
-      let ratBalanceNum = 0;
-      try {
-        ratBalanceNum = parseFloat(ethers.utils.formatEther(ratBalanceWei));
-      } catch (e) {
-        ratBalanceNum = 0;
-      }
-      return { ...r, _ratBalanceNum: ratBalanceNum };
-    }).sort((a, b) => {
-      if (ascending) {
-        return a._ratBalanceNum - b._ratBalanceNum;
-      } else {
-        return b._ratBalanceNum - a._ratBalanceNum;
-      }
+  try {
+    // 调用 RPC 函数
+    const { data: rpcResult, error: rpcError } = await supabase.rpc('admin_list_users_sorted', {
+      p_limit: params.limit,
+      p_offset: params.offset,
+      p_search: params.search || null,
+      p_sort_by: sortBy,
+      p_sort_order: sortOrder,
     });
     
-    // 应用分页
-    const paginatedData = sortedData.slice(params.offset, params.offset + params.limit);
+    if (rpcError) throw rpcError;
+    
+    // RPC 函数返回 JSON 格式：{ items: [...], total: number }
+    const result = rpcResult as { items: any[]; total: number };
+    const items = result.items || [];
+    const total = result.total || 0;
     
     return {
       ok: true,
-      items: paginatedData.map((r: any) => {
+      items: items.map((r: any) => {
+        // 🟢 将 Wei 值转换为格式化后的数值（用于前端显示）
         const ratBalanceWei = r.rat_balance_wei || '0';
         let ratBalance = 0;
         try {
@@ -695,53 +646,12 @@ export async function adminListUsers(params: {
           ratBalanceUpdatedAt: r.rat_balance_updated_at,
         };
       }),
-      total: count || 0,
+      total: total,
     };
-  } else if (sortBy === 'inviteCount') {
-    // 按邀请人数排序（应该是数值类型，可以直接排序）
-    query = query.order('invite_count', { ascending, nullsFirst: false });
-  } else {
-    // 默认按创建时间排序
-    query = query.order('created_at', { ascending });
+  } catch (error: any) {
+    console.error('[adminListUsers] RPC function error:', error);
+    throw error;
   }
-
-  // 分页
-  const from = params.offset;
-  const to = from + params.limit - 1;
-  query = query.range(from, to);
-
-  const { data, error, count } = await query;
-  if (error) throw error;
-
-  return {
-    ok: true,
-    items: (data || []).map((r: any) => {
-      // 🟢 将 Wei 值转换为格式化后的数值（用于前端显示）
-      const ratBalanceWei = r.rat_balance_wei || '0';
-      let ratBalance = 0;
-      try {
-        ratBalance = parseFloat(ethers.utils.formatEther(ratBalanceWei));
-      } catch (e) {
-        console.warn(`[adminListUsers] Failed to format RAT balance for ${r.address}:`, e);
-        ratBalance = 0;
-      }
-      
-      return {
-        address: r.address,
-        energyTotal: Number(r.energy_total || 0),
-        energyLocked: Number(r.energy_locked || 0),
-        inviteCount: Number(r.invite_count || 0),
-        referrer: r.referrer_address || null,
-        registeredAt: r.created_at,
-        lastActive: r.updated_at,
-        usdtBalance: Number(r.usdt_total || 0) - Number(r.usdt_locked || 0), // 可提现余额
-        ratBalance: ratBalance, // 🟢 新增：RAT 余额（格式化后的值）
-        ratBalanceWei: ratBalanceWei, // 🟢 新增：Wei 值（用于精确计算）
-        ratBalanceUpdatedAt: r.rat_balance_updated_at, // 🟢 新增：更新时间
-      };
-    }),
-    total: count || 0,
-  };
 }
 
 export async function adminListRecentClaims(limit: number) {
