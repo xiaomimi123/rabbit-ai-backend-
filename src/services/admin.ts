@@ -293,6 +293,13 @@ async function updateUserBalances(
   createdAt: string,
   updateLastSettlementTime?: boolean // 可选：是否更新 last_settlement_time
 ) {
+  // 🟢 关键修复：先读取现有的 last_settlement_time，确保在未指定更新时保留它
+  const { data: existingUser } = await supabase
+    .from('users')
+    .select('last_settlement_time')
+    .eq('address', address)
+    .maybeSingle();
+  
   const updateData: any = {
     address,
     energy_total: next.energyTotal,
@@ -303,10 +310,14 @@ async function updateUserBalances(
     created_at: createdAt,
   };
   
-  // 🟢 修复：如果指定更新结算时间，则同时更新 last_settlement_time
+  // 🟢 修复：如果指定更新结算时间，则更新为当前时间；否则保留原有值
   // 这用于管理员赠送 USDT 时，确保增量收益从赠送时间点开始计算
+  // 在 completeWithdrawal 时，保留原有的 last_settlement_time，不重置
   if (updateLastSettlementTime) {
     updateData.last_settlement_time = new Date().toISOString();
+  } else {
+    // 🟢 关键修复：显式保留原有的 last_settlement_time，避免 upsert 时丢失
+    updateData.last_settlement_time = (existingUser as any)?.last_settlement_time || null;
   }
   
   const { error } = await supabase.from('users').upsert(
