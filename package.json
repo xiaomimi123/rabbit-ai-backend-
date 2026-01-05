@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:verify": "node -e \"require('fs').accessSync('dist/index.js'); console.log('✅ Build verified: dist/index.js exists')\"",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "update-geolite2": "tsx scripts/update-geolite2.ts"
