@@ -136,11 +136,13 @@ export async function applyWithdraw(
 
   // 10. 🔒 原子更新：同时更新收益、结算时间和锁定金额
   // 注意：虽然 Supabase JS 客户端不支持真正的行锁，但通过业务逻辑保证一致性
-  // 🟢 修复：不重置 last_settlement_time，让增量收益继续从上次结算时间开始计算
+  // 🟢 修复：显式保留 last_settlement_time，让增量收益继续从上次结算时间开始计算
   // 这样提现后，用户看到的可提现金额 = usdt_total + incrementalEarnings - total_withdrawn
-  // 符合用户期望：提现前 2.2 USDT，提现 1 USDT 后应该看到 1.2 USDT 左右
+  // 符合用户期望：提现前 8.3 USDT，提现 2 USDT 后应该看到 6.3 USDT 左右
   const createdAt = (user as any)?.created_at || new Date().toISOString();
   const nowIso = new Date(nowTime).toISOString();
+  // 🟢 关键修复：显式保留原有的 last_settlement_time，避免 upsert 时丢失
+  const existingLastSettlementTime = (user as any)?.last_settlement_time || null;
 
   const { error: lockErr } = await supabase
     .from('users')
@@ -151,9 +153,9 @@ export async function applyWithdraw(
         energy_locked: newEnergyLocked,
         usdt_total: newUsdtTotal, // 🟢 Lazy Settle: 固化收益
         usdt_locked: newUsdtLocked,
-        // 🟢 修复：不更新 last_settlement_time，保持原有的结算时间
+        // 🟢 修复：显式保留原有的 last_settlement_time，不重置结算时间
         // 这样增量收益会继续从上次结算时间开始计算，而不是从提现时间开始
-        // last_settlement_time: nowIso, // ❌ 移除：不重置结算时间
+        last_settlement_time: existingLastSettlementTime, // ✅ 显式保留原有值
         created_at: createdAt,
         updated_at: nowIso,
       },
