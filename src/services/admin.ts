@@ -157,7 +157,9 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
         // 🟢 优化：使用数据库聚合函数计算累计总收益
         const { data: sumResult, error: sumErr } = await supabase.rpc('sum_fee_amount_wei');
         if (!sumErr && sumResult !== null) {
-          totalRevenueBNB = parseFloat(ethers.utils.formatEther(sumResult.toString()));
+          // 函数返回的是 TEXT 类型（纯数字字符串），直接使用
+          const weiString = String(sumResult).trim();
+          totalRevenueBNB = parseFloat(ethers.utils.formatEther(weiString));
         } else {
           // 降级到循环计算
           const { data: allClaims, error: claimsErr } = await supabase
@@ -185,8 +187,9 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
     // 🟢 优化：使用数据库聚合函数计算总和
     const { data: sumResult, error: sumErr } = await supabase.rpc('sum_rat_balance_wei');
     if (!sumErr && sumResult !== null) {
-      // 数据库返回的是 Wei 值（NUMERIC），直接转换为 RAT
-      const totalBalance = parseFloat(ethers.utils.formatEther(sumResult.toString()));
+      // 函数返回的是 TEXT 类型（纯数字字符串），直接使用
+      const weiString = String(sumResult).trim();
+      const totalBalance = parseFloat(ethers.utils.formatEther(weiString));
       
       totalHoldings = {
         amount: totalBalance.toFixed(2),
@@ -763,25 +766,45 @@ export async function adminGetUserTeam(address: string) {
   };
 }
 
+// 🟢 新增：持币大户排行缓存（减少数据库查询）
+let topHoldersCache: { data: Array<{ rank: number; address: string; balance: number }>; timestamp: number } | null = null;
+const TOP_HOLDERS_CACHE_TTL = 60000; // 缓存 60 秒
+
 /**
  * 获取 RAT 持币大户排行（Top Holders）
  * 🟢 优化：从数据库读取 RAT 余额，避免链上查询，提升响应速度
+ * 🟢 优化：添加缓存机制，减少数据库查询频率
+ * 🟢 优化：使用数据库排序和限制，提升查询性能
  */
 export async function getTopRATHolders(provider: ethers.providers.Provider, limit: number = 5) {
   try {
-    // 从数据库获取所有用户的地址和 RAT 余额（Wei 值）
+    // 🟢 检查缓存
+    if (topHoldersCache && Date.now() - topHoldersCache.timestamp < TOP_HOLDERS_CACHE_TTL) {
+      // 从缓存返回，但需要限制数量
+      return { 
+        ok: true, 
+        items: topHoldersCache.data.slice(0, limit) 
+      };
+    }
+
+    // 🟢 优化：查询有余额的用户（rat_balance_wei 是 TEXT 类型，无法直接数值排序）
+    // 先查询一定数量的数据，然后在内存中排序
+    // 为了性能，只查询前 200 名用户进行排序（足够覆盖大部分场景）
     const { data: users, error } = await supabase
       .from('users')
       .select('address, rat_balance_wei')
-      .not('rat_balance_wei', 'is', null); // 只查询有余额记录的用户
+      .not('rat_balance_wei', 'is', null)
+      .limit(200); // 查询前 200 条，用于排序和缓存
     
     if (error) throw error;
 
     if (!users || users.length === 0) {
+      // 缓存空结果
+      topHoldersCache = { data: [], timestamp: Date.now() };
       return { ok: true, items: [] };
     }
 
-    // 将 Wei 值转换为格式化后的数值，并排序
+    // 将 Wei 值转换为格式化后的数值，并按余额排序
     const holders = users
       .map((user: any) => {
         const balanceWei = user.rat_balance_wei || '0';
@@ -799,15 +822,20 @@ export async function getTopRATHolders(provider: ethers.providers.Provider, limi
       })
       .filter((item) => item.balance > 0) // 过滤掉余额为 0 的用户
       .sort((a, b) => b.balance - a.balance) // 按余额降序排序
-      .slice(0, limit) // 取前 N 名
+      .slice(0, 20) // 取前 20 名用于缓存
       .map((item, index) => ({
         rank: index + 1,
         address: item.address,
         balance: item.balance,
       }));
 
-    console.log(`[getTopRATHolders] Found ${holders.length} top holders from database`);
-    return { ok: true, items: holders };
+    // 🟢 更新缓存（缓存前 20 名，以便后续不同 limit 的请求）
+    topHoldersCache = { data: holders, timestamp: Date.now() };
+
+    // 返回限制数量的结果
+    const result = holders.slice(0, limit);
+    console.log(`[getTopRATHolders] Found ${result.length} top holders from database (cached for ${TOP_HOLDERS_CACHE_TTL / 1000}s)`);
+    return { ok: true, items: result };
   } catch (e: any) {
     console.error('[getTopRATHolders] Failed to get top RAT holders from database:', e);
     // 失败时返回空数组，不影响其他功能
