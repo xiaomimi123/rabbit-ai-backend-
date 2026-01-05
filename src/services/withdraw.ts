@@ -197,6 +197,22 @@ export async function applyWithdraw(
     throw insErr;
   }
 
+  // 🟢 发送 Telegram 提现申请通知（异步，不阻塞响应）
+  setImmediate(async () => {
+    try {
+      const { sendWithdrawalPendingNotification } = await import('./telegram.js');
+      await sendWithdrawalPendingNotification({
+        address: addr,
+        amount: String(amount),
+        energyCost: requiredEnergy,
+        withdrawalId: (inserted as any).id,
+        timestamp: (inserted as any).created_at,
+      });
+    } catch (e) {
+      console.error('[applyWithdraw] Telegram 通知发送失败（不影响提现）:', e);
+    }
+  });
+
   return {
     ok: true,
     id: (inserted as any).id,

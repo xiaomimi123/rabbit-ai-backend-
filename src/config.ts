@@ -62,6 +62,11 @@ export const config: {
   sentryDsn: string;
   sentryEnvironment: string;
   sentryEnabled: boolean;
+  telegram: {
+    botToken: string;
+    adminChatId: string;
+    enabled: boolean;
+  };
 } = {
   port: getPort(),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -118,6 +123,13 @@ export const config: {
   sentryDsn: optionalStr('SENTRY_DSN'), // Sentry DSN（用于错误监控）
   sentryEnvironment: optionalStr('SENTRY_ENVIRONMENT', process.env.NODE_ENV || 'development'), // Sentry 环境标识
   sentryEnabled: process.env.SENTRY_ENABLED !== 'false', // 是否启用 Sentry（默认启用，如果配置了 DSN）
+
+  // 🟢 新增：Telegram 通知配置
+  telegram: {
+    botToken: optionalStr('TELEGRAM_BOT_TOKEN'),
+    adminChatId: optionalStr('TELEGRAM_ADMIN_CHAT_ID'),
+    enabled: process.env.TELEGRAM_NOTIFICATIONS_ENABLED === 'true',
+  },
 };
 
 if (config.rpcUrls.length === 0) {

@@ -574,6 +574,19 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
       return reply.status(400).send(err);
     }
   });
+
+  // 🟢 新增：POST /api/admin/telegram/test - 测试 Telegram Bot 连接
+  app.post('/api/admin/telegram/test', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const { sendTestMessage } = await import('../../services/telegram.js');
+      const result = await sendTestMessage();
+      return result;
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(500).send(err);
+    }
+  });
 }
 
 

@@ -476,6 +476,22 @@ export async function completeWithdrawal(params: {
     // 不阻塞主流程，记录错误即可
   }
 
+  // 🟢 发送 Telegram 提现完成通知（异步，不阻塞响应）
+  setImmediate(async () => {
+    try {
+      const { sendWithdrawalCompletedNotification } = await import('./telegram.js');
+      await sendWithdrawalCompletedNotification({
+        address: userAddr,
+        amount: amount,
+        txHash: params.payoutTxHash,
+        withdrawalId: params.withdrawalId,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error('[completeWithdrawal] Telegram 通知发送失败（不影响提现）:', e);
+    }
+  });
+
   return { ok: true, id: params.withdrawalId, status: 'Completed', payoutTxHash: params.payoutTxHash, verified: true };
 }
 

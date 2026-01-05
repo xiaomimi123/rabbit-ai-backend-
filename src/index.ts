@@ -45,6 +45,15 @@ async function main() {
   // 🟢 优先初始化 Sentry（在服务启动前）
   await initSentry();
 
+  // 🟢 初始化 Telegram Bot（用于提现通知）
+  try {
+    const { initTelegramBot } = await import('./services/telegram.js');
+    initTelegramBot();
+  } catch (e) {
+    console.warn('[startup] ⚠️  Failed to initialize Telegram Bot:', e);
+    // Telegram 初始化失败不影响服务启动
+  }
+
   // 在服务启动时加载 VIP 配置到内存
   await loadVipTiers();
 
