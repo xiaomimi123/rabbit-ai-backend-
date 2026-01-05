@@ -67,7 +67,7 @@ export async function sendWithdrawalPendingNotification(data: {
 📌 状态: <b>待审核</b>
 
 请登录后台管理系统进行审核 👇
-https://admin.rabbitdifi.com
+https://bnsi55.net/
     `.trim();
 
     await bot.sendMessage(config.telegram.adminChatId, message, {
