@@ -333,34 +333,13 @@ export async function calculateUserEarnings(
   const startTime = new Date(firstClaim.created_at).getTime();
   const daysHolding = Math.max(0, (now - startTime) / (24 * 3600 * 1000)); // 不取整，保留小数
 
-  // 步骤 6: 查询数据库 withdrawals 表，统计该用户所有状态为 Pending 或 Completed 的提现总额
-  // ⚠️ 重要：必须统计 Pending 和 Completed 两种状态，因为：
-  // - Pending: 已申请但未完成，但金额已被锁定，应从可提现余额中扣除
-  // - Completed: 已完成提现，金额已实际转出，必须扣除
-  const { data: withdrawals, error: withdrawErr } = await supabase
-    .from('withdrawals')
-    .select('amount,status')
-    .eq('address', addr)
-    .in('status', ['Pending', 'Completed']);
-
-  if (withdrawErr) {
-    console.error(`[Earnings] Failed to query withdrawals for ${addr}:`, withdrawErr);
-    throw withdrawErr;
-  }
-
-  // 计算总提现金额（包括 Pending 和 Completed）
-  const totalWithdrawn = (withdrawals || []).reduce((sum: number, w: any) => {
-    const amount = Number(w.amount || 0);
-    return sum + amount;
-  }, 0);
-
-  // 步骤 7: 计算当前可领收益 = 实时总收益 - 已提现总额
-  // ⚠️ 关键修复：必须减去所有 Pending 和 Completed 的提现金额
-  // 如果计算结果小于 0，返回 0（不能为负数）
-  const netEarnings = Math.max(0, grossEarnings - totalWithdrawn);
+  // 🟢 方案2修复：usdt_total 作为"当前余额"，不需要查询 withdrawals 表
+  // 提现时已经从 usdt_total 扣除了金额，所以这里不需要再减去 totalWithdrawn
+  // 步骤 6: 计算当前可领收益 = 实时总收益（余额 + 增量）
+  const netEarnings = Math.max(0, grossEarnings);
 
   // 调试日志：记录计算过程（流式秒级结算）
-  console.log(`[Earnings] User ${addr}: baseEarnings=${baseEarnings.toFixed(6)}, incrementalEarnings=${incrementalEarnings.toFixed(6)}, grossEarnings=${grossEarnings.toFixed(6)}, totalWithdrawn=${totalWithdrawn.toFixed(6)}, netEarnings=${netEarnings.toFixed(6)}`);
+  console.log(`[Earnings] User ${addr}: baseEarnings=${baseEarnings.toFixed(6)}, incrementalEarnings=${incrementalEarnings.toFixed(6)}, grossEarnings=${grossEarnings.toFixed(6)}, netEarnings=${netEarnings.toFixed(6)}`);
 
   // 🟢 移除：不再异步更新 usdt_total（Lazy Settle：只在提现时固化）
   // 这样可以避免频繁的数据库写入，提高性能
@@ -372,7 +351,7 @@ export async function calculateUserEarnings(
     holdingDays: Math.floor(daysHolding), // 显示时取整
     balance: balance.toFixed(2),
     grossEarnings: grossEarnings.toFixed(6), // 🟢 改为6位小数
-    totalWithdrawn: totalWithdrawn.toFixed(6), // 🟢 改为6位小数
+    totalWithdrawn: '0', // 🟢 方案2修复：不再统计 totalWithdrawn，直接返回 '0'
   };
 }
 
