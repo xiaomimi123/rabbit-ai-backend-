@@ -48,6 +48,7 @@ import {
   getAdminExpensesWithDateRange,
 } from '../../services/admin.js';
 import { getVisitStats, getVisitSummary, getAnalyticsStats, cleanupOldVisits } from '../../services/analytics.js';
+import { getAllEnergyConfigs } from '../../services/energyConfig.js';
 import { sendUserNotification, broadcastNotification, getBroadcastHistory } from '../../services/notifications.js';
 // 🟢 新增：能量配置管理
 import { 
@@ -61,6 +62,42 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
   getProvider: () => ethers.providers.Provider;
   getAdminProvider: () => ethers.providers.Provider;
 }) {
+  // 🌐 公开API：获取能量配置（用于用户前端显示）
+  // 不需要管理员权限，任何用户都可以访问
+  app.get('/api/public/energy-config', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const configs = await getAllEnergyConfigs();
+      
+      // 将数组转换为对象格式，方便前端使用
+      const configObj: any = {};
+      configs.forEach((item) => {
+        configObj[item.key] = item.value;
+      });
+      
+      return {
+        ok: true,
+        config: {
+          withdraw_energy_ratio: configObj['withdraw_energy_ratio'] || 10,
+          claim_self_reward: configObj['claim_self_reward'] || 1,
+          claim_referrer_first: configObj['claim_referrer_first'] || 3,
+          claim_referrer_repeat: configObj['claim_referrer_repeat'] || 1,
+        }
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(500).send({
+        ok: false,
+        config: {
+          withdraw_energy_ratio: 10,
+          claim_self_reward: 1,
+          claim_referrer_first: 3,
+          claim_referrer_repeat: 1,
+        },
+        error: err.message
+      });
+    }
+  });
+
   // 🟢 新增：简单的认证验证接口，只验证密钥，不调用 RPC
   // 用于登录验证，避免在登录时触发网络错误
   app.get('/api/admin/auth/verify', async (req: FastifyRequest, reply: FastifyReply) => {
