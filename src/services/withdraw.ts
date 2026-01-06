@@ -237,7 +237,7 @@ export async function getWithdrawHistory(address: string) {
   try {
     const { data, error } = await supabase
       .from('withdrawals')
-      .select('id,amount,status,created_at')
+      .select('id,amount,status,created_at,energy_locked_amount')
       .eq('address', addr)
       .order('created_at', { ascending: false })
       .limit(50);
@@ -257,6 +257,7 @@ export async function getWithdrawHistory(address: string) {
       status: r.status || 'Pending',
       time: new Date(r.created_at).toISOString().slice(0, 19).replace('T', ' '),
       createdAt: r.created_at,
+      energyCost: r.energy_locked_amount ? Number(r.energy_locked_amount) : null, // 🟢 返回实际锁定的能量值
     }));
   } catch (error: any) {
     console.error('Error in getWithdrawHistory:', error);
