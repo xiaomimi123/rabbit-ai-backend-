@@ -71,21 +71,25 @@ export async function applyWithdraw(
   const baseEarnings = Number((user as any)?.usdt_total || 0);
   const realTimeEarnings = baseEarnings + incrementalEarnings;
 
-  // 6. 查询已提现金额（Pending + Completed）
+  // 6. 查询 Pending 状态的提现（防止重复提交）
+  // 🟢 修复：不再查询 Completed 状态，因为 usdt_total 已经在提现时扣除了金额
+  // 只需要检查是否有 Pending 的提现，避免重复提交
   const { data: withdrawals, error: withdrawErr } = await supabase
     .from('withdrawals')
     .select('amount,status')
     .eq('address', addr)
-    .in('status', ['Pending', 'Completed']);
+    .eq('status', 'Pending'); // 🟢 只查询 Pending
 
   if (withdrawErr) throw withdrawErr;
 
-  const totalWithdrawn = (withdrawals || []).reduce((sum: number, w: any) => {
+  const totalPending = (withdrawals || []).reduce((sum: number, w: any) => {
     return sum + Number(w.amount || 0);
   }, 0);
 
   // 7. 计算实际可提现金额
-  const availableUsdt = Math.max(0, realTimeEarnings - totalWithdrawn);
+  // 🟢 修复：realTimeEarnings 已经包含了所有收益，usdt_total 已经扣除了历史提现
+  // 只需要减去当前 Pending 的提现金额（防止重复提交）
+  const availableUsdt = Math.max(0, realTimeEarnings - totalPending);
 
   if (availableUsdt < amount) {
     throw new ApiError('USDT_NOT_ENOUGH', `USDT not enough (available ${availableUsdt.toFixed(6)}, need ${amount})`, 400);
