@@ -1425,8 +1425,7 @@ export async function getAdminRevenueWithDateRange(
   const { data, count, error } = await query;
   if (error) throw error;
 
-  // 🟢 修复：使用实际支付的手续费计算总收入
-  // 如果 fee_amount_wei 为空，降级使用当前的 claimFee（向后兼容）
+  // 🟢 修复：获取降级值（向后兼容旧记录）
   let fallbackClaimFee = '0';
   try {
     const airdrop = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
@@ -1436,18 +1435,48 @@ export async function getAdminRevenueWithDateRange(
     console.warn('[getAdminRevenueWithDateRange] Failed to get claimFee from contract, using 0 as fallback:', e);
   }
 
-  // 计算总收入：使用实际支付的手续费，如果为空则使用降级值
+  // 🟢 修复方案A：单独查询所有匹配日期范围的记录，计算准确的总收益
+  let totalQuery = supabase
+    .from('claims')
+    .select('fee_amount_wei');
+
+  // 应用相同的日期过滤条件
+  if (params.startDate) {
+    totalQuery = totalQuery.gte('created_at', params.startDate);
+  }
+  if (params.endDate) {
+    totalQuery = totalQuery.lte('created_at', params.endDate);
+  }
+
+  const { data: allFees, error: totalErr } = await totalQuery;
+  if (totalErr) {
+    console.error('[getAdminRevenueWithDateRange] Failed to query all fees:', totalErr);
+    throw totalErr;
+  }
+
+  // 🟢 修复：计算所有记录的总收益（不只是前 100 条）
   let totalRevenue = 0;
+  if (allFees) {
+    for (const record of allFees) {
+      if (record.fee_amount_wei) {
+        totalRevenue += parseFloat(ethers.utils.formatEther(record.fee_amount_wei));
+      } else {
+        // 向后兼容：旧记录可能没有 fee_amount_wei
+        totalRevenue += parseFloat(fallbackClaimFee);
+      }
+    }
+  }
+
+  console.log(`[getAdminRevenueWithDateRange] ✅ 统计了 ${allFees?.length || 0} 条记录，总收益: ${totalRevenue.toFixed(6)} BNB`);
+
+  // 🟢 构建返回的分页数据
   const items = (data || []).map((r: any) => {
     let feeAmount = 0;
     if (r.fee_amount_wei) {
-      // 使用实际支付的手续费
       feeAmount = parseFloat(ethers.utils.formatEther(r.fee_amount_wei));
     } else {
-      // 降级：使用当前的 claimFee（历史记录可能没有 fee_amount_wei）
       feeAmount = parseFloat(fallbackClaimFee);
     }
-    totalRevenue += feeAmount;
     return {
       id: r.tx_hash,
       address: r.address,
@@ -1461,7 +1490,8 @@ export async function getAdminRevenueWithDateRange(
   return {
     ok: true,
     items,
-    total: totalRevenue,
+    total: totalRevenue, // ✅ 返回所有记录的总收益（不只是 100 条）
+    totalCount: count || 0,
   };
 }
 
