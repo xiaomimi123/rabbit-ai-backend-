@@ -49,6 +49,13 @@ import {
 } from '../../services/admin.js';
 import { getVisitStats, getVisitSummary, getAnalyticsStats, cleanupOldVisits } from '../../services/analytics.js';
 import { sendUserNotification, broadcastNotification, getBroadcastHistory } from '../../services/notifications.js';
+// 🟢 新增：能量配置管理
+import { 
+  getAllEnergyConfigs, 
+  updateEnergyConfig, 
+  getEnergyConfigHistory,
+  clearEnergyConfigCache 
+} from '../../services/energyConfig.js';
 
 export function registerAdminRoutes(app: FastifyInstance, deps: { 
   getProvider: () => ethers.providers.Provider;
@@ -585,6 +592,82 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(500).send(err);
+    }
+  });
+
+  // ⚡ 能量配置管理路由
+  
+  // GET /api/admin/energy-config - 获取所有能量配置
+  app.get('/api/admin/energy-config', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const configs = await getAllEnergyConfigs();
+      return { ok: true, configs };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // POST /api/admin/energy-config/update - 更新能量配置
+  app.post('/api/admin/energy-config/update', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const { key, value, reason } = req.body as any;
+    
+    if (!key || typeof value !== 'number') {
+      return reply.status(400).send({ 
+        ok: false, 
+        code: 'INVALID_REQUEST',
+        message: 'Invalid request: key and value are required' 
+      });
+    }
+    
+    try {
+      // TODO: 从 session/token 获取管理员信息
+      const changedBy = 'admin'; // 临时硬编码
+      
+      const result = await updateEnergyConfig(key, value, changedBy, reason);
+      
+      // 清除缓存，确保新配置立即生效
+      clearEnergyConfigCache();
+      
+      console.log(`[Admin] ✅ 能量配置已更新: ${key} = ${value}`);
+      
+      return { 
+        ...result,
+        message: `配置已更新: ${key} = ${value}` 
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // GET /api/admin/energy-config/history - 获取配置变更历史
+  app.get('/api/admin/energy-config/history', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    const { key, limit } = req.query as any;
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    
+    try {
+      const history = await getEnergyConfigHistory(key, limitNum);
+      return { ok: true, history };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // POST /api/admin/energy-config/clear-cache - 清除配置缓存
+  app.post('/api/admin/energy-config/clear-cache', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      clearEnergyConfigCache();
+      console.log('[Admin] 🔄 能量配置缓存已清除');
+      return { ok: true, message: '配置缓存已清除' };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
     }
   });
 }

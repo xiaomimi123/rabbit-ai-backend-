@@ -3,6 +3,7 @@ import { AIRDROP_ABI, ERC20_ABI } from '../infra/abis.js';
 import { config } from '../config.js';
 import { supabase } from '../infra/supabase.js';
 import { ApiError } from '../api/errors.js';
+import { getEnergyConfigValueCached, EnergyConfigKeys } from './energyConfig.js'; // 🟢 新增：动态能量配置
 
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   let t: any;
@@ -311,7 +312,14 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   // ✅ 使用数据库 RPC 函数进行原子操作，解决并发问题
   // 🟢 新增：获取用户实际支付的 BNB 手续费（tx.value）
   const feeAmountWei = tx.value ? tx.value.toString() : null;
+  
+  // 🟢 动态获取能量配置
+  const claimSelfReward = await getEnergyConfigValueCached(EnergyConfigKeys.CLAIM_SELF);
+  const claimReferrerFirst = await getEnergyConfigValueCached(EnergyConfigKeys.CLAIM_REFERRER_FIRST);
+  const claimReferrerRepeat = await getEnergyConfigValueCached(EnergyConfigKeys.CLAIM_REFERRER_REPEAT);
+  
   console.log(`[verifyClaim] 开始处理交易: ${txHash}, 地址: ${address}, 推荐人: ${validReferrer}, 金额: ${ethers.utils.formatEther(claimedAmountWei)} RAT, 手续费: ${feeAmountWei ? ethers.utils.formatEther(feeAmountWei) : 'N/A'} BNB`);
+  console.log(`[verifyClaim] ⚡ 使用动态能量配置: { claimSelfReward: ${claimSelfReward}, claimReferrerFirst: ${claimReferrerFirst}, claimReferrerRepeat: ${claimReferrerRepeat} }`);
   
   const { data: rpcResult, error: rpcError } = await supabase.rpc('process_claim_energy', {
     p_tx_hash: txHash,
@@ -320,7 +328,11 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
     p_amount_wei: claimedAmountWei,
     p_block_number: receipt.blockNumber,
     p_block_time: blockTimeIso || new Date().toISOString(),
-    p_fee_amount_wei: feeAmountWei  // 🟢 新增：传递实际支付的手续费
+    p_fee_amount_wei: feeAmountWei,  // 传递实际支付的手续费
+    // 🟢 新增：传递动态能量配置
+    p_self_reward: claimSelfReward,
+    p_referrer_first: claimReferrerFirst,
+    p_referrer_repeat: claimReferrerRepeat
   });
 
   if (rpcError) {

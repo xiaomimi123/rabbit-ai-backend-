@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import { ERC20_ABI } from '../infra/abis.js';
 import { config } from '../config.js';
 import { getVipTierByBalance } from './vipConfig.js';
+import { getEnergyConfigValueCached, EnergyConfigKeys } from './energyConfig.js'; // 🟢 新增：动态能量配置
 
 export async function applyWithdraw(
   address: string, 
@@ -96,11 +97,13 @@ export async function applyWithdraw(
   const energyAvailable = Math.max(0, energyTotal - energyLocked);
 
   // ⚠️ 业务规则（风控参数）：
-  // 1. 能量消耗比例：1 USDT = 10 Energy（不是 1:1！）
-  // 2. 所需能量 = 提现金额 × 10（向上取整，确保能量值始终是整数）
+  // 🟢 动态能量消耗比例：从配置表读取（默认 1 USDT = 10 Energy）
+  // 所需能量 = 提现金额 × 配置比例（向上取整，确保能量值始终是整数）
   // 🟢 修复：使用 Math.ceil() 向上取整，避免浮点数精度问题
   // 例如：0.99 USDT * 10 = 9.9 → Math.ceil(9.9) = 10
-  const requiredEnergy = Math.ceil(amount * 10);
+  const withdrawEnergyRatio = await getEnergyConfigValueCached(EnergyConfigKeys.WITHDRAW_RATIO);
+  const requiredEnergy = Math.ceil(amount * withdrawEnergyRatio);
+  console.log(`[applyWithdraw] 🔋 提现 ${amount} USDT 需要 ${requiredEnergy} Energy (比例: ${withdrawEnergyRatio})`);
   if (energyAvailable < requiredEnergy) {
     throw new ApiError('ENERGY_NOT_ENOUGH', `Energy not enough (need >= ${requiredEnergy}, available ${energyAvailable})`, 400);
   }
