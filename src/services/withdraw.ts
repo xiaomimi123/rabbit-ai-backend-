@@ -145,13 +145,12 @@ export async function applyWithdraw(
 
   // 10. 🔒 原子更新：同时更新收益、结算时间和锁定金额
   // 注意：虽然 Supabase JS 客户端不支持真正的行锁，但通过业务逻辑保证一致性
-  // 🟢 修复：显式保留 last_settlement_time，让增量收益继续从上次结算时间开始计算
-  // 这样提现后，用户看到的可提现金额 = usdt_total + incrementalEarnings - total_withdrawn
-  // 符合用户期望：提现前 8.3 USDT，提现 2 USDT 后应该看到 6.3 USDT 左右
+  // 🔥 关键修复：提现时固化收益 + 重置结算时间
+  // 原因：如果保留旧的 last_settlement_time，利率变更后会用新利率重新计算旧时间段的收益
+  // 正确做法：提现时固化当前收益到 usdt_total，同时更新 last_settlement_time 为当前时间
+  // 这样新利率只会影响未来的增量收益，不会错误地重新计算历史收益
   const createdAt = (user as any)?.created_at || new Date().toISOString();
   const nowIso = new Date(nowTime).toISOString();
-  // 🟢 关键修复：显式保留原有的 last_settlement_time，避免 upsert 时丢失
-  const existingLastSettlementTime = (user as any)?.last_settlement_time || null;
 
   const { error: lockErr } = await supabase
     .from('users')
@@ -162,9 +161,10 @@ export async function applyWithdraw(
         energy_locked: newEnergyLocked,
         usdt_total: newUsdtTotal, // 🟢 Lazy Settle: 固化收益
         usdt_locked: newUsdtLocked,
-        // 🟢 修复：显式保留原有的 last_settlement_time，不重置结算时间
-        // 这样增量收益会继续从上次结算时间开始计算，而不是从提现时间开始
-        last_settlement_time: existingLastSettlementTime, // ✅ 显式保留原有值
+        // 🔥 关键修复：更新 last_settlement_time 为提现时间，确保历史收益被正确固化
+        // 这样下次计算增量收益时，只会从提现时间开始，用当时的利率计算
+        // 防止利率变更后，用新利率错误地重新计算旧时间段的收益
+        last_settlement_time: nowIso, // ✅ 更新为提现时间
         created_at: createdAt,
         updated_at: nowIso,
       },
@@ -188,6 +188,8 @@ export async function applyWithdraw(
 
   if (insErr) {
     // 🔄 回滚：恢复锁定状态（best-effort）
+    // 注意：这里回滚到原始状态，包括原始的 last_settlement_time
+    const originalLastSettlementTime = (user as any)?.last_settlement_time || null;
     await supabase.from('users').upsert(
       {
         address: addr,
@@ -195,7 +197,7 @@ export async function applyWithdraw(
         energy_locked: energyLocked,
         usdt_total: baseEarnings, // 恢复为基准收益（不包含增量）
         usdt_locked: Number((user as any)?.usdt_locked || 0),
-        last_settlement_time: (user as any)?.last_settlement_time || null,
+        last_settlement_time: originalLastSettlementTime, // 恢复原始的结算时间
         created_at: createdAt,
         updated_at: new Date().toISOString(),
       },
