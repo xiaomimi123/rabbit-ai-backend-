@@ -48,9 +48,8 @@ import {
   getAdminExpensesWithDateRange,
 } from '../../services/admin.js';
 import { getVisitStats, getVisitSummary, getAnalyticsStats, cleanupOldVisits } from '../../services/analytics.js';
-import { getAllEnergyConfigs } from '../../services/energyConfig.js';
 import { sendUserNotification, broadcastNotification, getBroadcastHistory } from '../../services/notifications.js';
-// 🟢 新增：能量配置管理
+// 🟢 能量配置管理
 import { 
   getAllEnergyConfigs, 
   updateEnergyConfig, 
