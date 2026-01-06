@@ -17,6 +17,8 @@ export interface VipTier {
  * VIP 配置缓存（内存变量）
  */
 let vipTiersCache: VipTier[] | null = null;
+let lastCacheTime: number = 0;
+const CACHE_TTL = 60 * 1000; // 🟢 缓存有效期：60秒（1分钟）
 
 /**
  * 从数据库加载 VIP 配置到内存
@@ -49,12 +51,14 @@ export async function loadVipTiers(): Promise<void> {
       name: row.name,
       minBalance: Number(row.min_balance),
       maxBalance: row.max_balance ? Number(row.max_balance) : null,
-      dailyRate: Number(row.daily_rate) / 100, // 转换为小数（例如 2.0 -> 0.02）
+      dailyRate: Number(row.daily_rate) / 100, // 转换为小数（例如 3.0 -> 0.03）
       isActive: row.is_active,
       displayOrder: row.display_order,
     }));
 
-    console.log(`[VIP Config] Loaded ${vipTiersCache.length} VIP tiers from database`);
+    lastCacheTime = Date.now(); // 🟢 记录缓存时间
+    console.log(`[VIP Config] ✅ Loaded ${vipTiersCache.length} VIP tiers from database:`, 
+      vipTiersCache.map(t => `${t.name}=${t.dailyRate * 100}%`).join(', '));
   } catch (error: any) {
     console.error('[VIP Config] Error loading VIP tiers:', error);
     vipTiersCache = getDefaultVipTiers();
@@ -75,13 +79,29 @@ function getDefaultVipTiers(): VipTier[] {
 
 /**
  * 获取内存中的 VIP 配置
- * 如果未加载，返回默认配置
+ * 如果未加载或缓存过期，异步刷新缓存（但仍返回旧缓存）
  */
 export function getVipTiers(): VipTier[] {
+  const now = Date.now();
+  
+  // 🟢 如果缓存过期（超过1分钟），异步刷新缓存
+  if (vipTiersCache && (now - lastCacheTime) > CACHE_TTL) {
+    console.log('[VIP Config] Cache expired, refreshing in background...');
+    // 异步刷新，不阻塞当前请求
+    loadVipTiers().catch(err => {
+      console.error('[VIP Config] Background refresh failed:', err);
+    });
+  }
+  
+  // 如果从未加载过，返回默认配置并触发加载
   if (!vipTiersCache) {
-    console.warn('[VIP Config] Cache not loaded, using defaults');
+    console.warn('[VIP Config] Cache not loaded, using defaults and loading...');
+    loadVipTiers().catch(err => {
+      console.error('[VIP Config] Initial load failed:', err);
+    });
     return getDefaultVipTiers();
   }
+  
   return vipTiersCache;
 }
 
