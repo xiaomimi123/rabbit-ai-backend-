@@ -47,7 +47,21 @@ async function getAdminPayoutAddress(): Promise<string | null> {
   return null;
 }
 
+// 🟢 修复：添加 KPI 缓存机制（防止前端死循环导致 RPC 节点过载）
+let kpiCache: any = null;
+let kpiCacheTime: number = 0;
+const KPI_CACHE_TTL_MS = 60 * 1000; // 60 秒缓存（大大减少 RPC 调用频率）
+
 export async function getAdminKpis(provider: ethers.providers.Provider) {
+  const now = Date.now();
+  
+  // 🟢 如果缓存未过期，直接返回缓存数据
+  if (kpiCache && (now - kpiCacheTime) < KPI_CACHE_TTL_MS) {
+    console.log('[getAdminKpis] 🚀 返回缓存数据（缓存剩余时间:', Math.round((KPI_CACHE_TTL_MS - (now - kpiCacheTime)) / 1000), '秒）');
+    return kpiCache;
+  }
+  
+  console.log('[getAdminKpis] 缓存已过期或不存在，重新查询...');
   // users count - 🟢 优先从数据库查询，不依赖 RPC
   const { count: usersCount, error: usersErr } = await supabase.from('users').select('address', { count: 'exact', head: true });
   if (usersErr) {
@@ -227,7 +241,8 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
     // 失败时返回 null，不影响其他数据
   }
 
-  return {
+  // 🟢 构建响应数据
+  const result = {
     ok: true,
     usersTotal: Number(finalUsersCount),
     pendingWithdrawTotal: String(pendingTotal),
@@ -246,6 +261,13 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
     totalHoldings, // ✅ 修复：计算所有用户的 RAT 总持仓量
     time: new Date().toISOString(),
   };
+
+  // 🟢 更新缓存
+  kpiCache = result;
+  kpiCacheTime = Date.now();
+  console.log('[getAdminKpis] ✅ 数据已缓存，60 秒内后续请求将直接使用缓存');
+
+  return result;
 }
 
 export async function listPendingWithdrawals(limit: number) {
