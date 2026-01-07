@@ -280,19 +280,77 @@ export async function listPendingWithdrawals(limit: number) {
     .limit(limit);
   if (error) throw error;
 
+  // 🟢 新增：批量查询用户画像数据
+  const addresses = (data || []).map((r: any) => r.address.toLowerCase());
+  const { data: usersData, error: usersError } = await supabase
+    .from('users')
+    .select('address,rat_balance_wei,energy_total,energy_locked,usdt_total')
+    .in('address', addresses);
+  if (usersError) throw usersError;
+
+  // 创建地址到用户数据的映射
+  const usersMap = new Map();
+  (usersData || []).forEach((u: any) => {
+    usersMap.set(u.address.toLowerCase(), u);
+  });
+
+  // 🟢 导入 VIP 配置服务
+  const { getVipTierByBalance } = await import('./vipConfig.js');
+
   return {
     ok: true,
-    items: (data || []).map((r: any) => ({
-      id: r.id,
-      address: r.address,
-      amount: String(r.amount),
-      status: r.status,
-      energyLockedAmount: String(r.energy_locked_amount || 0),
-      payoutTxHash: r.payout_tx_hash,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      alert: Number(r.amount || 0) >= Number(config.withdrawAlertThreshold || 1000),
-    })),
+    items: (data || []).map((r: any) => {
+      const userAddr = r.address.toLowerCase();
+      const user = usersMap.get(userAddr);
+      
+      // 🟢 计算用户画像数据
+      let ratBalance = 0;
+      let energyAvailable = 0;
+      let totalEarnings = 0;
+      let vipLevel = 0;
+      
+      if (user) {
+        // RAT 持仓（从 Wei 转换为 RAT）
+        try {
+          const ratBalanceWei = user.rat_balance_wei || '0';
+          ratBalance = parseFloat(ethers.utils.formatEther(ratBalanceWei));
+        } catch (e) {
+          console.warn(`[listPendingWithdrawals] Failed to parse RAT balance for ${userAddr}:`, e);
+          ratBalance = 0;
+        }
+        
+        // 可用能量
+        const energyTotal = Number(user.energy_total || 0);
+        const energyLocked = Number(user.energy_locked || 0);
+        energyAvailable = Math.max(0, energyTotal - energyLocked);
+        
+        // 累计收益
+        totalEarnings = Number(user.usdt_total || 0);
+        
+        // VIP 等级
+        const vipInfo = getVipTierByBalance(ratBalance);
+        vipLevel = vipInfo.tier;
+      }
+      
+      return {
+        id: r.id,
+        address: r.address,
+        amount: String(r.amount),
+        status: r.status,
+        energyLockedAmount: String(r.energy_locked_amount || 0),
+        payoutTxHash: r.payout_tx_hash,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        alert: Number(r.amount || 0) >= Number(config.withdrawAlertThreshold || 1000),
+        // 🟢 新增：用户画像数据
+        userStats: {
+          ratBalance,
+          energyAvailable,
+          totalEarnings,
+          vipLevel,
+        },
+      };
+    }),
   };
 }
 
