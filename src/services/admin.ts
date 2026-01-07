@@ -3,6 +3,7 @@ import { supabase } from '../infra/supabase.js';
 import { config } from '../config.js';
 import { ApiError } from '../api/errors.js';
 import { AIRDROP_ABI, ERC20_ABI } from '../infra/abis.js';
+import { getEnergyConfigValueCached, EnergyConfigKeys } from './energyConfig.js';
 
 function lower(addr: string) {
   return (addr || '').toLowerCase();
@@ -1258,11 +1259,14 @@ export async function getAdminOperations(params: {
   // 合并 withdrawals、claims 和 admin_operations 表的数据
   const operations: any[] = [];
 
+  // 🟢 新增：获取空投领取的能量奖励配置（用于显示历史记录）
+  const claimSelfReward = await getEnergyConfigValueCached(EnergyConfigKeys.CLAIM_SELF);
+
   // 1. 获取提现记录
   if (type === 'all' || type === 'Withdrawal') {
     let withdrawalsQuery = supabase
       .from('withdrawals')
-      .select('id,address,amount,status,payout_tx_hash,created_at,updated_at')
+      .select('id,address,amount,status,payout_tx_hash,created_at,updated_at,energy_locked_amount')
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -1274,6 +1278,9 @@ export async function getAdminOperations(params: {
     if (wErr) throw wErr;
 
     (withdrawals || []).forEach((w: any) => {
+      // 🟢 新增：计算能量变动（提现扣除的能量，显示为负数）
+      const energyChange = w.energy_locked_amount ? -Number(w.energy_locked_amount) : null;
+      
       operations.push({
         id: w.id,
         address: w.address,
@@ -1282,6 +1289,7 @@ export async function getAdminOperations(params: {
         status: w.status === 'Completed' ? 'Success' : w.status === 'Rejected' ? 'Rejected' : 'Pending',
         timestamp: w.updated_at || w.created_at,
         txHash: w.payout_tx_hash || undefined,
+        energyChange, // 🟢 新增：能量变动字段
       });
     });
   }
@@ -1302,6 +1310,9 @@ export async function getAdminOperations(params: {
     if (cErr) throw cErr;
 
     (claims || []).forEach((c: any) => {
+      // 🟢 新增：空投领取获得的能量（使用当前配置值，因为历史记录没有存储当时的配置）
+      const energyChange = claimSelfReward; // 默认使用当前配置值（通常是 +1）
+      
       operations.push({
         id: c.tx_hash,
         address: c.address,
@@ -1310,6 +1321,7 @@ export async function getAdminOperations(params: {
         status: 'Success',
         timestamp: c.created_at,
         txHash: c.tx_hash,
+        energyChange, // 🟢 新增：能量变动字段
       });
     });
   }
@@ -1335,6 +1347,12 @@ export async function getAdminOperations(params: {
     if (aErr) throw aErr;
 
     (adminOps || []).forEach((a: any) => {
+      // 🟢 新增：管理员操作的能量变动（仅对 AddEnergy/DeductEnergy 类型）
+      let energyChange: number | null = null;
+      if (a.operation_type === 'AddEnergy' || a.operation_type === 'DeductEnergy') {
+        energyChange = Number(a.amount); // 保持正负号（AddEnergy 为正，DeductEnergy 为负）
+      }
+      
       operations.push({
         id: a.id,
         address: a.address,
@@ -1344,6 +1362,7 @@ export async function getAdminOperations(params: {
         timestamp: a.created_at,
         amountBefore: String(a.amount_before),
         amountAfter: String(a.amount_after),
+        energyChange, // 🟢 新增：能量变动字段
       });
     });
   }
