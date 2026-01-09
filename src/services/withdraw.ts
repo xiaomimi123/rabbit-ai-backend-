@@ -158,13 +158,13 @@ export async function applyWithdraw(
   // 6. 查询 Pending 状态的提现（防止重复提交）
   // 🟢 修复：不再查询 Completed 状态，因为 usdt_total 已经在提现时扣除了金额
   // 只需要检查是否有 Pending 的提现，避免重复提交
-  const { data: withdrawals, error: withdrawErr } = await supabase
+  const { data: withdrawals, error: withdrawalsErr } = await supabase
     .from('withdrawals')
     .select('amount,status')
     .eq('address', addr)
     .eq('status', 'Pending'); // 🟢 只查询 Pending
 
-  if (withdrawErr) throw withdrawErr;
+  if (withdrawalsErr) throw withdrawalsErr;
 
   const totalPending = (withdrawals || []).reduce((sum: number, w: any) => {
     return sum + Number(w.amount || 0);
@@ -246,7 +246,7 @@ export async function applyWithdraw(
 
   if (withdrawErr) {
     console.error('[applyWithdraw] 数据库函数调用失败:', withdrawErr);
-    throw new ApiError('DATABASE_ERROR', withdrawErr.message, 500);
+    throw new ApiError('INTERNAL_ERROR', withdrawErr.message || 'Database function call failed', 500);
   }
 
   if (!withdrawResult || !withdrawResult.ok) {

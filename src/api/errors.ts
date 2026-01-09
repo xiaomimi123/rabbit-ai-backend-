@@ -14,6 +14,7 @@ export type ApiErrorCode =
   | 'UNAUTHORIZED'
   | 'ADMIN_DISABLED'
   | 'RPC_ERROR'
+  | 'DATABASE_ERROR'
   | 'INTERNAL_ERROR';
 
 export class ApiError extends Error {

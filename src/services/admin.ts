@@ -1090,7 +1090,7 @@ export async function adminAdjustUserEnergy(address: string, delta: number) {
 
   if (error) {
     console.error('[adminAdjustUserEnergy] 数据库函数调用失败:', error);
-    throw new ApiError('DATABASE_ERROR', error.message, 500);
+    throw new ApiError('INTERNAL_ERROR', error.message || 'Database function call failed', 500);
   }
 
   if (!result || !result.ok) {
@@ -1136,7 +1136,7 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
 
   if (error) {
     console.error('[adminAdjustUserUsdt] 数据库函数调用失败:', error);
-    throw new ApiError('DATABASE_ERROR', error.message, 500);
+    throw new ApiError('INTERNAL_ERROR', error.message || 'Database function call failed', 500);
   }
 
   if (!result || !result.ok) {
