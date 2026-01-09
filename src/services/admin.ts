@@ -1124,9 +1124,13 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
   if (!Number.isFinite(delta)) throw new ApiError('INVALID_REQUEST', 'Invalid delta', 400);
 
   // ✅ P0级修复：使用数据库函数（带行锁和原子更新）
-  // 🟢 当管理员增加 USDT 时，同时更新 last_settlement_time
-  // 这样增量收益会从赠送时间点开始计算，而不是从旧的结算时间开始
-  const updateSettlementTime = delta > 0; // 只有增加时才更新结算时间
+  // 🔒 关键修复：管理员赠送USDT时，不更新 last_settlement_time
+  // 原因：
+  // 1. 增量收益是基于RAT代币余额的，与USDT无关
+  // 2. 重置 last_settlement_time 会导致用户丢失历史增量收益
+  // 3. 管理员赠送的USDT是"已固化的收益"，应该直接增加到 usdt_total
+  // 4. 增量收益应该继续从上次结算时间计算，而不是从赠送时间重新开始
+  const updateSettlementTime = false; // 🔒 修复：不再更新结算时间
 
   const { data: result, error } = await supabase.rpc('admin_adjust_user_usdt_safe', {
     p_address: addr,

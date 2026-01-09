@@ -57,8 +57,9 @@ export async function applyWithdraw(
   // 4. 确定 VIP 等级和日利率
   const { dailyRate, tier: currentTier } = getVipTierByBalance(balance);
 
-  // 🔒 关键安全修复：检测外部转账（Sybil Attack 防护）
+  // 📊 检测外部转账（用于记录和统计，不影响收益计算）
   // 如果链上余额 > 系统记录余额 * 1.1（差异超过10%），说明有大额外部资金进入
+  // 🟢 业务规则：允许外部转账用户产生持币生息收益（从 last_settlement_time 开始计算）
   let hasExternalTransfer = false;
   let systemRecordedBalance = 0;
   
@@ -93,11 +94,11 @@ export async function applyWithdraw(
       if (systemRecordedBalance > 0 && balance > systemRecordedBalance * EXTERNAL_TRANSFER_THRESHOLD) {
         hasExternalTransfer = true;
         const externalTransferAmount = balance - systemRecordedBalance;
-        console.warn(`[Withdraw] 🚨 检测到外部转账（Sybil Attack 风险）: 用户 ${addr}`);
-        console.warn(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT`);
-        console.warn(`   当前链上余额: ${balance.toFixed(2)} RAT`);
-        console.warn(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
-        console.warn(`   🔒 安全措施: 将使用当前时间作为起息日，防止多支付利息`);
+        console.log(`[Withdraw] 📊 检测到外部转账: 用户 ${addr}`);
+        console.log(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT`);
+        console.log(`   当前链上余额: ${balance.toFixed(2)} RAT`);
+        console.log(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
+        console.log(`   ✅ 允许产生持币生息收益（从 last_settlement_time 开始计算）`);
       }
     } catch (error: any) {
       console.warn(`[Withdraw] ⚠️ 检测外部转账失败: ${error?.message || error}`);
@@ -110,27 +111,94 @@ export async function applyWithdraw(
     ? new Date((user as any).last_settlement_time).getTime()
     : new Date(firstClaim.created_at).getTime();
   
-  // 🔒 关键安全修复：如果检测到外部转账，必须使用"当前时间"作为起息日
-  // 这是为了防止 Sybil Attack：用户通过外部转账获得代币后，系统错误地从账户创建时间开始计算收益
+  // 🟢 业务规则：允许外部转账用户产生持币生息收益
+  // 不再重置 last_settlement_time，允许从账户创建时间或首次达到10k的时间开始计算收益
   if (hasExternalTransfer) {
-    // 🚨 检测到外部转账：使用当前时间作为起息日，防止多支付利息
-    lastSettlementTime = nowTime;
-    console.warn(`[Withdraw] 🔒 检测到外部转账，使用当前时间作为起息日，防止多支付利息`);
-    
-    // 更新数据库中的 last_settlement_time
-    const nowIso = new Date(nowTime).toISOString();
-    await supabase
-      .from('users')
-      .update({ last_settlement_time: nowIso })
-      .eq('address', addr);
+    console.log(`[Withdraw] 📝 检测到外部转账，但允许用户产生持币生息收益（从 last_settlement_time 开始计算）`);
   }
   
   const timeElapsedMs = nowTime - lastSettlementTime;
   const daysElapsed = timeElapsedMs / (24 * 3600 * 1000); // 精确到毫秒的天数
 
+  // 🔒 P0级修复：持币生息最低门槛验证
+  // 只有余额 >= 10,000 RAT 才能产生收益
+  // 如果余额 < 10,000，增量收益必须为 0（即使有历史脏数据）
+  const MIN_BALANCE_FOR_EARNINGS = 10000;
+  
   const TOKEN_PRICE = 0.01; // $0.01 per RAT
-  let incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+  let incrementalEarnings = 0;
+  
+  // 🔒 P0级修复：只有余额 >= 10,000 RAT 才能计算增量收益
+  if (balance >= MIN_BALANCE_FOR_EARNINGS) {
+    incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+  } else {
+    // 余额 < 10,000，不产生收益
+    console.warn(`[Withdraw] ⚠️ 用户 ${addr} 余额 ${balance.toFixed(2)} RAT < ${MIN_BALANCE_FOR_EARNINGS} RAT，不计算增量收益`);
+  }
+  
   const baseEarnings = Number((user as any)?.usdt_total || 0);
+  
+  // 🔒 P0级修复：区分"管理员赠送的USDT"和"持币生息收益"
+  // 问题：之前的逻辑会将管理员赠送的USDT也过滤掉，导致用户无法提现
+  // 解决方案：查询管理员赠送的总USDT，只对持币生息收益进行最低门槛验证
+  
+  // 1. 查询管理员赠送的总USDT（包括已提现的部分）
+  let adminGiftedUsdt = 0;
+  try {
+    const { data: adminOps } = await supabase
+      .from('admin_operations')
+      .select('amount')
+      .eq('address', addr)
+      .eq('operation_type', 'AddUSDT');
+    
+    if (adminOps && adminOps.length > 0) {
+      adminGiftedUsdt = adminOps.reduce((sum, op) => sum + Number(op.amount || 0), 0);
+    }
+  } catch (error: any) {
+    console.warn(`[Withdraw] ⚠️ 查询管理员操作记录失败: ${error?.message || error}`);
+    // 查询失败不影响收益计算，继续使用 baseEarnings
+  }
+  
+  // 2. 计算持币生息产生的收益（baseEarnings - 管理员赠送的USDT）
+  const earningsFromHolding = Math.max(0, baseEarnings - adminGiftedUsdt);
+  
+  // 3. 验证持币生息收益（需要最低门槛）
+  let validEarningsFromHolding = earningsFromHolding;
+  
+  // 情况1：当前余额 < 10,000，持币生息收益视为0
+  if (balance < MIN_BALANCE_FOR_EARNINGS && earningsFromHolding > 0) {
+    console.error(`[Withdraw] 🚨 检测到非法持币生息收益（脏数据）: 用户 ${addr}`);
+    console.error(`   当前余额: ${balance.toFixed(2)} RAT < ${MIN_BALANCE_FOR_EARNINGS} RAT`);
+    console.error(`   持币生息收益（脏数据）: ${earningsFromHolding.toFixed(6)} USDT`);
+    console.error(`   🔒 安全措施: 将持币生息收益视为 0，但保留管理员赠送的USDT`);
+    validEarningsFromHolding = 0;
+  }
+  // 情况2：系统记录余额 < 10,000（即使当前余额 >= 10,000，可能是外部转账）
+  else if (hasExternalTransfer && systemRecordedBalance > 0 && systemRecordedBalance < MIN_BALANCE_FOR_EARNINGS && earningsFromHolding > 0) {
+    console.error(`[Withdraw] 🚨 检测到非法持币生息收益（脏数据）: 用户 ${addr}`);
+    console.error(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT < ${MIN_BALANCE_FOR_EARNINGS} RAT`);
+    console.error(`   当前余额: ${balance.toFixed(2)} RAT（包含外部转账）`);
+    console.error(`   持币生息收益（脏数据）: ${earningsFromHolding.toFixed(6)} USDT`);
+    console.error(`   🔒 安全措施: 系统记录余额 < 10,000，持币生息收益视为脏数据，但保留管理员赠送的USDT`);
+    validEarningsFromHolding = 0;
+  }
+  
+  // 4. 管理员赠送的USDT始终有效（不受最低门槛限制）
+  const validAdminGiftedUsdt = Math.min(adminGiftedUsdt, baseEarnings);
+  
+  // 5. 计算有效的基准收益 = 管理员赠送的USDT + 有效的持币生息收益
+  const validBaseEarnings = validAdminGiftedUsdt + validEarningsFromHolding;
+  
+  // 调试日志
+  if (adminGiftedUsdt > 0) {
+    console.log(`[Withdraw] 用户 ${addr} 管理员赠送USDT分析:`);
+    console.log(`   管理员赠送总额: ${adminGiftedUsdt.toFixed(6)} USDT`);
+    console.log(`   当前 baseEarnings: ${baseEarnings.toFixed(6)} USDT`);
+    console.log(`   持币生息收益: ${earningsFromHolding.toFixed(6)} USDT`);
+    console.log(`   有效持币生息收益: ${validEarningsFromHolding.toFixed(6)} USDT`);
+    console.log(`   有效管理员赠送USDT: ${validAdminGiftedUsdt.toFixed(6)} USDT`);
+    console.log(`   有效基准收益: ${validBaseEarnings.toFixed(6)} USDT`);
+  }
   
   // 🔒 关键安全修复：最大收益熔断限制（防止 Sybil Attack 和计算错误）
   // 理论最大值 = 当前余额 * 最高利率(10%) * (当前时间 - 账户创建时间)
@@ -153,7 +221,30 @@ export async function applyWithdraw(
     incrementalEarnings = Math.min(incrementalEarnings, theoreticalMaxEarnings);
   }
   
-  const realTimeEarnings = baseEarnings + incrementalEarnings;
+  const realTimeEarnings = validBaseEarnings + incrementalEarnings;
+
+  // 🟢 增强日志：记录收益计算详情（特别是外部转账和余额不足情况）
+  if (hasExternalTransfer) {
+    console.log(`[Withdraw] 📊 外部转账用户收益计算详情:`);
+    console.log(`   当前余额: ${balance.toFixed(2)} RAT`);
+    console.log(`   基准收益（合法）: ${validBaseEarnings.toFixed(6)} USDT (原始: ${baseEarnings.toFixed(6)} USDT)`);
+    console.log(`   增量收益: ${incrementalEarnings.toFixed(6)} USDT (时间差: ${daysElapsed.toFixed(6)} 天)`);
+    console.log(`   实时总收益: ${realTimeEarnings.toFixed(6)} USDT`);
+    console.log(`   ✅ 注意：允许外部转账用户产生持币生息收益（从 last_settlement_time 开始计算）`);
+  } else if (balance < MIN_BALANCE_FOR_EARNINGS) {
+    console.log(`[Withdraw] 📊 余额不足用户收益计算详情:`);
+    console.log(`   当前余额: ${balance.toFixed(2)} RAT < ${MIN_BALANCE_FOR_EARNINGS} RAT（最低门槛）`);
+    console.log(`   基准收益（合法）: ${validBaseEarnings.toFixed(6)} USDT (原始: ${baseEarnings.toFixed(6)} USDT，可能包含脏数据)`);
+    console.log(`   增量收益: ${incrementalEarnings.toFixed(6)} USDT（余额不足，不计算收益）`);
+    console.log(`   实时总收益: ${realTimeEarnings.toFixed(6)} USDT`);
+    console.log(`   ⚠️ 注意：余额 < ${MIN_BALANCE_FOR_EARNINGS} RAT 无法产生收益`);
+  } else {
+    console.log(`[Withdraw] 📊 收益计算详情:`);
+    console.log(`   当前余额: ${balance.toFixed(2)} RAT`);
+    console.log(`   基准收益（已固化）: ${validBaseEarnings.toFixed(6)} USDT`);
+    console.log(`   增量收益: ${incrementalEarnings.toFixed(6)} USDT (时间差: ${daysElapsed.toFixed(6)} 天)`);
+    console.log(`   实时总收益: ${realTimeEarnings.toFixed(6)} USDT`);
+  }
 
   // 6. 查询 Pending 状态的提现（防止重复提交）
   // 🟢 修复：不再查询 Completed 状态，因为 usdt_total 已经在提现时扣除了金额
@@ -176,7 +267,31 @@ export async function applyWithdraw(
   const availableUsdt = Math.max(0, realTimeEarnings - totalPending);
 
   if (availableUsdt < amount) {
-    throw new ApiError('USDT_NOT_ENOUGH', `USDT not enough (available ${availableUsdt.toFixed(6)}, need ${amount})`, 400);
+    // 🟢 增强错误信息：提供更详细的说明
+    let errorMsg = `USDT not enough (available ${availableUsdt.toFixed(6)}, need ${amount})`;
+    
+    if (balance < MIN_BALANCE_FOR_EARNINGS) {
+      errorMsg += `. Note: Your balance (${balance.toFixed(2)} RAT) is below the minimum requirement (${MIN_BALANCE_FOR_EARNINGS} RAT) for earning rewards. You need at least ${MIN_BALANCE_FOR_EARNINGS} RAT to generate earnings.`;
+    } else if (hasExternalTransfer) {
+      errorMsg += `. Note: External transfer tokens do not generate historical earnings. You can only withdraw your existing earnings (${validBaseEarnings.toFixed(6)} USDT).`;
+    }
+    
+    console.error(`[Withdraw] ❌ 提现金额不足:`);
+    console.error(`   可提现金额: ${availableUsdt.toFixed(6)} USDT`);
+    console.error(`   申请金额: ${amount.toFixed(6)} USDT`);
+    console.error(`   基准收益（合法）: ${validBaseEarnings.toFixed(6)} USDT`);
+    console.error(`   基准收益（原始，可能包含脏数据）: ${baseEarnings.toFixed(6)} USDT`);
+    console.error(`   增量收益: ${incrementalEarnings.toFixed(6)} USDT`);
+    console.error(`   当前余额: ${balance.toFixed(2)} RAT`);
+    console.error(`   Pending 提现: ${totalPending.toFixed(6)} USDT`);
+    if (balance < MIN_BALANCE_FOR_EARNINGS) {
+      console.error(`   ⚠️ 余额不足 ${MIN_BALANCE_FOR_EARNINGS} RAT，无法产生收益`);
+    }
+    if (hasExternalTransfer) {
+      console.log(`   📝 外部转账用户：允许产生持币生息收益（从 last_settlement_time 开始计算）`);
+    }
+    
+    throw new ApiError('USDT_NOT_ENOUGH', errorMsg, 400);
   }
 
   // 8. 验证能量

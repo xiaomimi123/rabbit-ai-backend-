@@ -102,10 +102,9 @@ export async function calculateUserEarnings(
   // 步骤 4: 确定 VIP 等级和日利率（从数据库配置读取）
   const { dailyRate, tier: currentTier } = getVipTierByBalance(balance);
 
-  // 🔒 关键安全修复：检测外部转账（Sybil Attack 防护）
+  // 📊 检测外部转账（用于记录和统计，不影响收益计算）
   // 如果链上余额 > 系统记录余额 * 1.1（差异超过10%），说明有大额外部资金进入
-  // 在这种情况下，必须使用"当前时间"作为起息日，而不是账户创建时间
-  // 这是为了防止用户通过外部转账获得代币后，系统错误地从账户创建时间开始计算收益
+  // 🟢 业务规则：允许外部转账用户产生持币生息收益（从 last_settlement_time 开始计算）
   let hasExternalTransfer = false;
   let systemRecordedBalance = 0;
   
@@ -140,12 +139,12 @@ export async function calculateUserEarnings(
       if (systemRecordedBalance > 0 && balance > systemRecordedBalance * EXTERNAL_TRANSFER_THRESHOLD) {
         hasExternalTransfer = true;
         const externalTransferAmount = balance - systemRecordedBalance;
-        console.warn(`[Earnings] 🚨 检测到外部转账（Sybil Attack 风险）: 用户 ${addr}`);
-        console.warn(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT`);
-        console.warn(`   当前链上余额: ${balance.toFixed(2)} RAT`);
-        console.warn(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
-        console.warn(`   差异比例: ${((balance / systemRecordedBalance - 1) * 100).toFixed(2)}%`);
-        console.warn(`   🔒 安全措施: 将使用当前时间作为起息日，防止多支付利息`);
+        console.log(`[Earnings] 📊 检测到外部转账: 用户 ${addr}`);
+        console.log(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT`);
+        console.log(`   当前链上余额: ${balance.toFixed(2)} RAT`);
+        console.log(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
+        console.log(`   差异比例: ${((balance / systemRecordedBalance - 1) * 100).toFixed(2)}%`);
+        console.log(`   ✅ 允许产生持币生息收益（从 last_settlement_time 开始计算）`);
       }
     } catch (error: any) {
       // 检测失败不影响收益计算，但记录警告
@@ -327,71 +326,42 @@ export async function calculateUserEarnings(
             console.warn(`[Earnings] ⚠️ Failed to initialize last_settlement_time for ${addr}:`, updateErr);
           }
         } else {
-          // 如果查询不到首次达到10k的时间，说明可能是通过其他方式获得的代币（如直接转账）
-          // 🔒 关键安全修复：如果检测到外部转账，必须使用"当前时间"作为起息日
-          // 这是为了防止 Sybil Attack：用户通过外部转账获得代币后，系统错误地从账户创建时间开始计算收益
-          if (hasExternalTransfer) {
-            // 🚨 检测到外部转账：使用当前时间作为起息日，防止多支付利息
-            const nowIso = new Date().toISOString();
-            const { error: updateErr } = await supabase
-              .from('users')
-              .update({ last_settlement_time: nowIso })
-              .eq('address', addr);
-            
-            if (!updateErr) {
-              lastSettlementTime = now;
-              console.warn(`[Earnings] 🔒 检测到外部转账，设置 last_settlement_time 为当前时间: ${nowIso}`);
-              console.warn(`[Earnings]   这是为了防止 Sybil Attack，避免从账户创建时间开始计算收益`);
-            } else {
-              console.error(`[Earnings] ❌ 更新 last_settlement_time 失败:`, updateErr);
-            }
-          } else {
-            // 如果没有检测到外部转账，使用首次领取时间作为保守估计
-            // 注意：这种情况应该很少见，因为如果系统记录能到10k，应该能找到首次达到10k的时间
-            console.log(`[Earnings] ⚠️ Could not find first 10k time for ${addr} (total events: ${allEvents.length}, cumulative: ${cumulativeBalance.toFixed(2)} RAT, current balance: ${balance.toFixed(2)} RAT)`);
-            console.log(`[Earnings] 💡 Using first claim time as conservative estimate. Admin can manually set last_settlement_time if needed.`);
-            
-            const firstClaimIso = firstClaim.created_at;
-            const { error: updateErr } = await supabase
-              .from('users')
-              .update({ last_settlement_time: firstClaimIso })
-              .eq('address', addr);
-            
-            if (!updateErr) {
-              lastSettlementTime = new Date(firstClaimIso).getTime();
-              console.log(`[Earnings] ✅ Set last_settlement_time to first claim time: ${firstClaimIso}`);
+          // 如果查询不到首次达到10k的时间，说明可能是通过外部转账获得的代币
+          // 🟢 业务规则：允许外部转账用户产生持币生息收益
+          // 使用首次领取时间作为保守估计（从账户创建开始计算收益）
+          console.log(`[Earnings] ⚠️ Could not find first 10k time for ${addr} (total events: ${allEvents.length}, cumulative: ${cumulativeBalance.toFixed(2)} RAT, current balance: ${balance.toFixed(2)} RAT)`);
+          console.log(`[Earnings] 💡 Using first claim time as conservative estimate. This allows external transfer users to earn interest.`);
+          
+          const firstClaimIso = firstClaim.created_at;
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ last_settlement_time: firstClaimIso })
+            .eq('address', addr);
+          
+          if (!updateErr) {
+            lastSettlementTime = new Date(firstClaimIso).getTime();
+            console.log(`[Earnings] ✅ Set last_settlement_time to first claim time: ${firstClaimIso}`);
+            if (hasExternalTransfer) {
+              console.log(`[Earnings] 📝 Note: User has external transfers, but earnings will be calculated from account creation time as per business rules.`);
             }
           }
         }
       } else {
-        // 没有任何代币来源记录
-        // 🔒 关键安全修复：如果检测到外部转账，必须使用"当前时间"作为起息日
-        if (hasExternalTransfer) {
-          // 🚨 检测到外部转账：使用当前时间作为起息日，防止多支付利息
-          const nowIso = new Date().toISOString();
-          const { error: updateErr } = await supabase
-            .from('users')
-            .update({ last_settlement_time: nowIso })
-            .eq('address', addr);
-          
-          if (!updateErr) {
-            lastSettlementTime = now;
-            console.warn(`[Earnings] 🔒 检测到外部转账且无系统记录，设置 last_settlement_time 为当前时间: ${nowIso}`);
-            console.warn(`[Earnings]   这是为了防止 Sybil Attack，避免从账户创建时间开始计算收益`);
-          } else {
-            console.error(`[Earnings] ❌ 更新 last_settlement_time 失败:`, updateErr);
-          }
-        } else {
-          // 没有外部转账，使用当前时间（这种情况应该很少见）
-          console.log(`[Earnings] ⚠️ No token events found for ${addr}, using current time`);
-          const nowIso = new Date().toISOString();
-          const { error: updateErr } = await supabase
-            .from('users')
-            .update({ last_settlement_time: nowIso })
-            .eq('address', addr);
-          
-          if (!updateErr) {
-            lastSettlementTime = now;
+        // 没有任何代币来源记录（可能是纯外部转账用户）
+        // 🟢 业务规则：允许外部转账用户产生持币生息收益
+        // 使用首次领取时间作为保守估计（从账户创建开始计算收益）
+        console.log(`[Earnings] ⚠️ No token events found for ${addr}, using first claim time`);
+        const firstClaimIso = firstClaim.created_at;
+        const { error: updateErr } = await supabase
+          .from('users')
+          .update({ last_settlement_time: firstClaimIso })
+          .eq('address', addr);
+        
+        if (!updateErr) {
+          lastSettlementTime = new Date(firstClaimIso).getTime();
+          console.log(`[Earnings] ✅ Set last_settlement_time to first claim time: ${firstClaimIso}`);
+          if (hasExternalTransfer) {
+            console.log(`[Earnings] 📝 Note: User has external transfers, but earnings will be calculated from account creation time as per business rules.`);
           }
         }
       }
@@ -401,13 +371,26 @@ export async function calculateUserEarnings(
     }
   }
   
+  // 🔒 P0级修复：持币生息最低门槛验证
+  // 只有余额 >= 10,000 RAT 才能产生收益
+  // 如果余额 < 10,000，增量收益必须为 0（即使有历史脏数据）
+  const MIN_BALANCE_FOR_EARNINGS = 10000;
+  
   // 计算从上次结算到现在的天数（不取整，保留小数）
   const timeElapsedMs = now - lastSettlementTime;
   const daysElapsed = timeElapsedMs / (24 * 3600 * 1000); // 精确到毫秒的天数
 
   // 计算增量收益 = Balance * 0.01 * Rate * Days（不取整）
   const TOKEN_PRICE = 0.01; // $0.01 per RAT
-  let incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+  let incrementalEarnings = 0;
+  
+  // 🔒 P0级修复：只有余额 >= 10,000 RAT 才能计算增量收益
+  if (balance >= MIN_BALANCE_FOR_EARNINGS) {
+    incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+  } else {
+    // 余额 < 10,000，不产生收益
+    console.warn(`[Earnings] ⚠️ 用户 ${addr} 余额 ${balance.toFixed(2)} RAT < ${MIN_BALANCE_FOR_EARNINGS} RAT，不计算增量收益`);
+  }
 
   // 🔒 关键安全修复：最大收益熔断限制（防止 Sybil Attack 和计算错误）
   // 理论最大值 = 当前余额 * 最高利率(10%) * (当前时间 - 账户创建时间)
@@ -432,9 +415,80 @@ export async function calculateUserEarnings(
 
   // 基准收益（已固化的收益，来自数据库）
   const baseEarnings = Number((userRow as any)?.usdt_total || 0);
+  
+  // 🔒 P0级修复：区分"管理员赠送的USDT"和"持币生息收益"
+  // 问题：之前的逻辑会将管理员赠送的USDT也过滤掉，导致前端不显示
+  // 解决方案：查询管理员赠送的总USDT，只对持币生息收益进行最低门槛验证
+  
+  // 1. 查询管理员赠送的总USDT（包括已提现的部分）
+  let adminGiftedUsdt = 0;
+  try {
+    const { data: adminOps } = await supabase
+      .from('admin_operations')
+      .select('amount')
+      .eq('address', addr)
+      .eq('operation_type', 'AddUSDT');
+    
+    if (adminOps && adminOps.length > 0) {
+      adminGiftedUsdt = adminOps.reduce((sum, op) => sum + Number(op.amount || 0), 0);
+    }
+  } catch (error: any) {
+    console.warn(`[Earnings] ⚠️ 查询管理员操作记录失败: ${error?.message || error}`);
+    // 查询失败不影响收益计算，继续使用 baseEarnings
+  }
+  
+  // 2. 计算持币生息产生的收益（baseEarnings - 管理员赠送的USDT）
+  // 注意：如果用户提现了部分管理员赠送的USDT，这里计算的是"剩余的管理员赠送USDT"
+  // 实际持币生息收益 = baseEarnings - (管理员赠送总额 - 已提现的管理员赠送部分)
+  // 简化处理：假设 baseEarnings 中包含了剩余的管理员赠送USDT
+  // 如果 baseEarnings >= adminGiftedUsdt，说明有持币生息收益
+  // 如果 baseEarnings < adminGiftedUsdt，说明用户提现了部分管理员赠送的USDT
+  const earningsFromHolding = Math.max(0, baseEarnings - adminGiftedUsdt);
+  
+  // 3. 验证持币生息收益（需要最低门槛）
+  let validEarningsFromHolding = earningsFromHolding;
+  
+  // 情况1：当前余额 < 10,000，持币生息收益视为0
+  if (balance < MIN_BALANCE_FOR_EARNINGS && earningsFromHolding > 0) {
+    console.warn(`[Earnings] ⚠️ 检测到非法持币生息收益（脏数据）: 用户 ${addr}`);
+    console.warn(`   当前余额: ${balance.toFixed(2)} RAT < ${MIN_BALANCE_FOR_EARNINGS} RAT`);
+    console.warn(`   持币生息收益（脏数据）: ${earningsFromHolding.toFixed(6)} USDT`);
+    console.warn(`   🔒 安全措施: 将持币生息收益视为 0，但保留管理员赠送的USDT`);
+    validEarningsFromHolding = 0;
+  }
+  // 情况2：系统记录余额 < 10,000（即使当前余额 >= 10,000，可能是外部转账）
+  else if (hasExternalTransfer && systemRecordedBalance > 0 && systemRecordedBalance < MIN_BALANCE_FOR_EARNINGS && earningsFromHolding > 0) {
+    console.warn(`[Earnings] ⚠️ 检测到非法持币生息收益（脏数据）: 用户 ${addr}`);
+    console.warn(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT < ${MIN_BALANCE_FOR_EARNINGS} RAT`);
+    console.warn(`   当前余额: ${balance.toFixed(2)} RAT（包含外部转账）`);
+    console.warn(`   持币生息收益（脏数据）: ${earningsFromHolding.toFixed(6)} USDT`);
+    console.warn(`   🔒 安全措施: 系统记录余额 < 10,000，持币生息收益视为脏数据，但保留管理员赠送的USDT`);
+    validEarningsFromHolding = 0;
+  }
+  
+  // 4. 管理员赠送的USDT始终有效（不受最低门槛限制）
+  // 注意：如果用户提现了部分管理员赠送的USDT，adminGiftedUsdt 是总额，baseEarnings 是剩余值
+  // 所以实际可用的管理员赠送USDT = min(adminGiftedUsdt, baseEarnings)
+  // 但为了简化，我们假设 baseEarnings 中已经扣除了提现部分
+  // 如果 baseEarnings < adminGiftedUsdt，说明用户提现了部分，剩余的管理员赠送USDT = baseEarnings
+  const validAdminGiftedUsdt = Math.min(adminGiftedUsdt, baseEarnings);
+  
+  // 5. 计算有效的基准收益 = 管理员赠送的USDT + 有效的持币生息收益
+  const validBaseEarnings = validAdminGiftedUsdt + validEarningsFromHolding;
+  
+  // 调试日志
+  if (adminGiftedUsdt > 0) {
+    console.log(`[Earnings] 用户 ${addr} 管理员赠送USDT分析:`);
+    console.log(`   管理员赠送总额: ${adminGiftedUsdt.toFixed(6)} USDT`);
+    console.log(`   当前 baseEarnings: ${baseEarnings.toFixed(6)} USDT`);
+    console.log(`   持币生息收益: ${earningsFromHolding.toFixed(6)} USDT`);
+    console.log(`   有效持币生息收益: ${validEarningsFromHolding.toFixed(6)} USDT`);
+    console.log(`   有效管理员赠送USDT: ${validAdminGiftedUsdt.toFixed(6)} USDT`);
+    console.log(`   有效基准收益: ${validBaseEarnings.toFixed(6)} USDT`);
+  }
 
-  // 实时总收益 = 基准收益 + 增量收益
-  const grossEarnings = baseEarnings + incrementalEarnings;
+  // 实时总收益 = 合法基准收益 + 增量收益
+  const grossEarnings = validBaseEarnings + incrementalEarnings;
 
   // 计算持币天数（用于显示，从首次领取开始计算）
   const startTime = new Date(firstClaim.created_at).getTime();
@@ -446,7 +500,7 @@ export async function calculateUserEarnings(
   const netEarnings = Math.max(0, grossEarnings);
 
   // 调试日志：记录计算过程（流式秒级结算）
-  console.log(`[Earnings] User ${addr}: baseEarnings=${baseEarnings.toFixed(6)}, incrementalEarnings=${incrementalEarnings.toFixed(6)}, grossEarnings=${grossEarnings.toFixed(6)}, netEarnings=${netEarnings.toFixed(6)}`);
+  console.log(`[Earnings] User ${addr}: balance=${balance.toFixed(2)} RAT, validBaseEarnings=${validBaseEarnings.toFixed(6)} (原始: ${baseEarnings.toFixed(6)}), incrementalEarnings=${incrementalEarnings.toFixed(6)}, grossEarnings=${grossEarnings.toFixed(6)}, netEarnings=${netEarnings.toFixed(6)}`);
 
   // 🟢 移除：不再异步更新 usdt_total（Lazy Settle：只在提现时固化）
   // 这样可以避免频繁的数据库写入，提高性能
