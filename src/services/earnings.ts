@@ -102,6 +102,57 @@ export async function calculateUserEarnings(
   // 步骤 4: 确定 VIP 等级和日利率（从数据库配置读取）
   const { dailyRate, tier: currentTier } = getVipTierByBalance(balance);
 
+  // 🔒 关键安全修复：检测外部转账（Sybil Attack 防护）
+  // 如果链上余额 > 系统记录余额 * 1.1（差异超过10%），说明有大额外部资金进入
+  // 在这种情况下，必须使用"当前时间"作为起息日，而不是账户创建时间
+  // 这是为了防止用户通过外部转账获得代币后，系统错误地从账户创建时间开始计算收益
+  let hasExternalTransfer = false;
+  let systemRecordedBalance = 0;
+  
+  if (balance >= 10000) {
+    try {
+      // 计算系统记录的累计代币（claims + referral_rewards）
+      const { data: allClaims } = await supabase
+        .from('claims')
+        .select('amount_wei')
+        .eq('address', addr);
+      
+      const { data: allRewards } = await supabase
+        .from('referral_rewards')
+        .select('amount_wei')
+        .eq('referrer_address', addr);
+      
+      if (allClaims) {
+        for (const claim of allClaims) {
+          systemRecordedBalance += parseFloat(ethers.utils.formatEther(claim.amount_wei || '0'));
+        }
+      }
+      if (allRewards) {
+        for (const reward of allRewards) {
+          systemRecordedBalance += parseFloat(ethers.utils.formatEther(reward.amount_wei || '0'));
+        }
+      }
+      
+      // 🔒 检测外部转账：如果链上余额 > 系统记录余额 * 1.1（差异超过10%）
+      // ⚠️ 重要：只有当系统记录余额 > 0 时才进行检测，避免误报正常用户
+      // 正常用户通过系统记录获得代币，systemRecordedBalance 应该 >= 10,000（如果余额 >= 10,000）
+      const EXTERNAL_TRANSFER_THRESHOLD = 1.1; // 10% 差异阈值
+      if (systemRecordedBalance > 0 && balance > systemRecordedBalance * EXTERNAL_TRANSFER_THRESHOLD) {
+        hasExternalTransfer = true;
+        const externalTransferAmount = balance - systemRecordedBalance;
+        console.warn(`[Earnings] 🚨 检测到外部转账（Sybil Attack 风险）: 用户 ${addr}`);
+        console.warn(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT`);
+        console.warn(`   当前链上余额: ${balance.toFixed(2)} RAT`);
+        console.warn(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
+        console.warn(`   差异比例: ${((balance / systemRecordedBalance - 1) * 100).toFixed(2)}%`);
+        console.warn(`   🔒 安全措施: 将使用当前时间作为起息日，防止多支付利息`);
+      }
+    } catch (error: any) {
+      // 检测失败不影响收益计算，但记录警告
+      console.warn(`[Earnings] ⚠️ 检测外部转账失败: ${error?.message || error}`);
+    }
+  }
+
   // 🟢 关键修复：如果用户首次达到10k RAT，初始化 last_settlement_time
   // 问题：如果用户首次达到10k后没有再次领取空投，last_settlement_time 可能仍然是首次领取时间
   // 这会导致从首次领取开始计算收益，而不是从达到10k开始
@@ -277,36 +328,71 @@ export async function calculateUserEarnings(
           }
         } else {
           // 如果查询不到首次达到10k的时间，说明可能是通过其他方式获得的代币（如直接转账）
-          // 🟢 优化策略：使用首次领取时间作为保守估计
-          // 这样即使无法确定转账时间，也能从首次领取开始计算收益（不会多算收益）
-          // 如果用户希望从转账时间开始计算，可以通过管理员工具手动设置 last_settlement_time
-          console.log(`[Earnings] ⚠️ Could not find first 10k time for ${addr} (total events: ${allEvents.length}, cumulative: ${cumulativeBalance.toFixed(2)} RAT, current balance: ${balance.toFixed(2)} RAT)`);
-          console.log(`[Earnings] 💡 Using first claim time as conservative estimate. Admin can manually set last_settlement_time if needed.`);
-          
-          // 使用首次领取时间作为保守估计（不会多算收益）
-          // 如果用户确实是通过直接转账获得的代币，管理员可以手动设置 last_settlement_time
-          const firstClaimIso = firstClaim.created_at;
-          const { error: updateErr } = await supabase
-            .from('users')
-            .update({ last_settlement_time: firstClaimIso })
-            .eq('address', addr);
-          
-          if (!updateErr) {
-            lastSettlementTime = new Date(firstClaimIso).getTime();
-            console.log(`[Earnings] ✅ Set last_settlement_time to first claim time: ${firstClaimIso}`);
+          // 🔒 关键安全修复：如果检测到外部转账，必须使用"当前时间"作为起息日
+          // 这是为了防止 Sybil Attack：用户通过外部转账获得代币后，系统错误地从账户创建时间开始计算收益
+          if (hasExternalTransfer) {
+            // 🚨 检测到外部转账：使用当前时间作为起息日，防止多支付利息
+            const nowIso = new Date().toISOString();
+            const { error: updateErr } = await supabase
+              .from('users')
+              .update({ last_settlement_time: nowIso })
+              .eq('address', addr);
+            
+            if (!updateErr) {
+              lastSettlementTime = now;
+              console.warn(`[Earnings] 🔒 检测到外部转账，设置 last_settlement_time 为当前时间: ${nowIso}`);
+              console.warn(`[Earnings]   这是为了防止 Sybil Attack，避免从账户创建时间开始计算收益`);
+            } else {
+              console.error(`[Earnings] ❌ 更新 last_settlement_time 失败:`, updateErr);
+            }
+          } else {
+            // 如果没有检测到外部转账，使用首次领取时间作为保守估计
+            // 注意：这种情况应该很少见，因为如果系统记录能到10k，应该能找到首次达到10k的时间
+            console.log(`[Earnings] ⚠️ Could not find first 10k time for ${addr} (total events: ${allEvents.length}, cumulative: ${cumulativeBalance.toFixed(2)} RAT, current balance: ${balance.toFixed(2)} RAT)`);
+            console.log(`[Earnings] 💡 Using first claim time as conservative estimate. Admin can manually set last_settlement_time if needed.`);
+            
+            const firstClaimIso = firstClaim.created_at;
+            const { error: updateErr } = await supabase
+              .from('users')
+              .update({ last_settlement_time: firstClaimIso })
+              .eq('address', addr);
+            
+            if (!updateErr) {
+              lastSettlementTime = new Date(firstClaimIso).getTime();
+              console.log(`[Earnings] ✅ Set last_settlement_time to first claim time: ${firstClaimIso}`);
+            }
           }
         }
       } else {
-        // 没有任何代币来源记录，使用当前时间
-        console.log(`[Earnings] ⚠️ No token events found for ${addr}, using current time`);
-        const nowIso = new Date().toISOString();
-        const { error: updateErr } = await supabase
-          .from('users')
-          .update({ last_settlement_time: nowIso })
-          .eq('address', addr);
-        
-        if (!updateErr) {
-          lastSettlementTime = now;
+        // 没有任何代币来源记录
+        // 🔒 关键安全修复：如果检测到外部转账，必须使用"当前时间"作为起息日
+        if (hasExternalTransfer) {
+          // 🚨 检测到外部转账：使用当前时间作为起息日，防止多支付利息
+          const nowIso = new Date().toISOString();
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ last_settlement_time: nowIso })
+            .eq('address', addr);
+          
+          if (!updateErr) {
+            lastSettlementTime = now;
+            console.warn(`[Earnings] 🔒 检测到外部转账且无系统记录，设置 last_settlement_time 为当前时间: ${nowIso}`);
+            console.warn(`[Earnings]   这是为了防止 Sybil Attack，避免从账户创建时间开始计算收益`);
+          } else {
+            console.error(`[Earnings] ❌ 更新 last_settlement_time 失败:`, updateErr);
+          }
+        } else {
+          // 没有外部转账，使用当前时间（这种情况应该很少见）
+          console.log(`[Earnings] ⚠️ No token events found for ${addr}, using current time`);
+          const nowIso = new Date().toISOString();
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ last_settlement_time: nowIso })
+            .eq('address', addr);
+          
+          if (!updateErr) {
+            lastSettlementTime = now;
+          }
         }
       }
     } catch (error: any) {
@@ -321,7 +407,28 @@ export async function calculateUserEarnings(
 
   // 计算增量收益 = Balance * 0.01 * Rate * Days（不取整）
   const TOKEN_PRICE = 0.01; // $0.01 per RAT
-  const incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+  let incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+
+  // 🔒 关键安全修复：最大收益熔断限制（防止 Sybil Attack 和计算错误）
+  // 理论最大值 = 当前余额 * 最高利率(10%) * (当前时间 - 账户创建时间)
+  // 如果计算的收益超过理论最大值，说明可能存在时间回溯错误或攻击
+  const accountCreatedTime = new Date(firstClaim.created_at).getTime();
+  const maxPossibleDays = (now - accountCreatedTime) / (24 * 3600 * 1000);
+  const MAX_DAILY_RATE = 0.10; // 最高日利率 10%（VIP 4）
+  const theoreticalMaxEarnings = balance * TOKEN_PRICE * MAX_DAILY_RATE * maxPossibleDays;
+  
+  if (incrementalEarnings > theoreticalMaxEarnings) {
+    console.error(`[Earnings] 🚨 收益计算异常：增量收益超过理论最大值`);
+    console.error(`   计算的增量收益: ${incrementalEarnings.toFixed(6)} USDT`);
+    console.error(`   理论最大值: ${theoreticalMaxEarnings.toFixed(6)} USDT`);
+    console.error(`   账户创建时间: ${new Date(accountCreatedTime).toISOString()}`);
+    console.error(`   当前时间: ${new Date(now).toISOString()}`);
+    console.error(`   时间差: ${maxPossibleDays.toFixed(2)} 天`);
+    console.error(`   🔒 安全措施: 将增量收益限制为理论最大值`);
+    
+    // 限制增量收益为理论最大值
+    incrementalEarnings = Math.min(incrementalEarnings, theoreticalMaxEarnings);
+  }
 
   // 基准收益（已固化的收益，来自数据库）
   const baseEarnings = Number((userRow as any)?.usdt_total || 0);

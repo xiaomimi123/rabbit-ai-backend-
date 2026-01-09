@@ -57,18 +57,102 @@ export async function applyWithdraw(
   // 4. 确定 VIP 等级和日利率
   const { dailyRate, tier: currentTier } = getVipTierByBalance(balance);
 
+  // 🔒 关键安全修复：检测外部转账（Sybil Attack 防护）
+  // 如果链上余额 > 系统记录余额 * 1.1（差异超过10%），说明有大额外部资金进入
+  let hasExternalTransfer = false;
+  let systemRecordedBalance = 0;
+  
+  if (balance >= 10000 && provider) {
+    try {
+      // 计算系统记录的累计代币（claims + referral_rewards）
+      const { data: allClaims } = await supabase
+        .from('claims')
+        .select('amount_wei')
+        .eq('address', addr);
+      
+      const { data: allRewards } = await supabase
+        .from('referral_rewards')
+        .select('amount_wei')
+        .eq('referrer_address', addr);
+      
+      if (allClaims) {
+        for (const claim of allClaims) {
+          systemRecordedBalance += parseFloat(ethers.utils.formatEther(claim.amount_wei || '0'));
+        }
+      }
+      if (allRewards) {
+        for (const reward of allRewards) {
+          systemRecordedBalance += parseFloat(ethers.utils.formatEther(reward.amount_wei || '0'));
+        }
+      }
+      
+      // 🔒 检测外部转账：如果链上余额 > 系统记录余额 * 1.1（差异超过10%）
+      // ⚠️ 重要：只有当系统记录余额 > 0 时才进行检测，避免误报正常用户
+      // 正常用户通过系统记录获得代币，systemRecordedBalance 应该 >= 10,000（如果余额 >= 10,000）
+      const EXTERNAL_TRANSFER_THRESHOLD = 1.1; // 10% 差异阈值
+      if (systemRecordedBalance > 0 && balance > systemRecordedBalance * EXTERNAL_TRANSFER_THRESHOLD) {
+        hasExternalTransfer = true;
+        const externalTransferAmount = balance - systemRecordedBalance;
+        console.warn(`[Withdraw] 🚨 检测到外部转账（Sybil Attack 风险）: 用户 ${addr}`);
+        console.warn(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT`);
+        console.warn(`   当前链上余额: ${balance.toFixed(2)} RAT`);
+        console.warn(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
+        console.warn(`   🔒 安全措施: 将使用当前时间作为起息日，防止多支付利息`);
+      }
+    } catch (error: any) {
+      console.warn(`[Withdraw] ⚠️ 检测外部转账失败: ${error?.message || error}`);
+    }
+  }
+
   // 5. 💰 Lazy Settle: 计算实时收益
   const nowTime = Date.now();
-  const lastSettlementTime = (user as any)?.last_settlement_time 
+  let lastSettlementTime = (user as any)?.last_settlement_time 
     ? new Date((user as any).last_settlement_time).getTime()
     : new Date(firstClaim.created_at).getTime();
+  
+  // 🔒 关键安全修复：如果检测到外部转账，必须使用"当前时间"作为起息日
+  // 这是为了防止 Sybil Attack：用户通过外部转账获得代币后，系统错误地从账户创建时间开始计算收益
+  if (hasExternalTransfer) {
+    // 🚨 检测到外部转账：使用当前时间作为起息日，防止多支付利息
+    lastSettlementTime = nowTime;
+    console.warn(`[Withdraw] 🔒 检测到外部转账，使用当前时间作为起息日，防止多支付利息`);
+    
+    // 更新数据库中的 last_settlement_time
+    const nowIso = new Date(nowTime).toISOString();
+    await supabase
+      .from('users')
+      .update({ last_settlement_time: nowIso })
+      .eq('address', addr);
+  }
   
   const timeElapsedMs = nowTime - lastSettlementTime;
   const daysElapsed = timeElapsedMs / (24 * 3600 * 1000); // 精确到毫秒的天数
 
   const TOKEN_PRICE = 0.01; // $0.01 per RAT
-  const incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
+  let incrementalEarnings = balance * TOKEN_PRICE * (dailyRate / 100) * daysElapsed;
   const baseEarnings = Number((user as any)?.usdt_total || 0);
+  
+  // 🔒 关键安全修复：最大收益熔断限制（防止 Sybil Attack 和计算错误）
+  // 理论最大值 = 当前余额 * 最高利率(10%) * (当前时间 - 账户创建时间)
+  // 如果计算的收益超过理论最大值，说明可能存在时间回溯错误或攻击
+  const accountCreatedTime = new Date(firstClaim.created_at).getTime();
+  const maxPossibleDays = (nowTime - accountCreatedTime) / (24 * 3600 * 1000);
+  const MAX_DAILY_RATE = 0.10; // 最高日利率 10%（VIP 4）
+  const theoreticalMaxEarnings = balance * TOKEN_PRICE * MAX_DAILY_RATE * maxPossibleDays;
+  
+  if (incrementalEarnings > theoreticalMaxEarnings) {
+    console.error(`[Withdraw] 🚨 收益计算异常：增量收益超过理论最大值`);
+    console.error(`   计算的增量收益: ${incrementalEarnings.toFixed(6)} USDT`);
+    console.error(`   理论最大值: ${theoreticalMaxEarnings.toFixed(6)} USDT`);
+    console.error(`   账户创建时间: ${new Date(accountCreatedTime).toISOString()}`);
+    console.error(`   当前时间: ${new Date(nowTime).toISOString()}`);
+    console.error(`   时间差: ${maxPossibleDays.toFixed(2)} 天`);
+    console.error(`   🔒 安全措施: 将增量收益限制为理论最大值`);
+    
+    // 限制增量收益为理论最大值
+    incrementalEarnings = Math.min(incrementalEarnings, theoreticalMaxEarnings);
+  }
+  
   const realTimeEarnings = baseEarnings + incrementalEarnings;
 
   // 6. 查询 Pending 状态的提现（防止重复提交）
@@ -143,14 +227,19 @@ export async function applyWithdraw(
     }
   }
 
-  // 10. 🔒 原子更新：同时更新收益、结算时间和锁定金额
+  // 10. 🔒 原子更新：同时更新收益和锁定金额
   // 注意：虽然 Supabase JS 客户端不支持真正的行锁，但通过业务逻辑保证一致性
-  // 🔥 关键修复：提现时固化收益 + 重置结算时间
-  // 原因：如果保留旧的 last_settlement_time，利率变更后会用新利率重新计算旧时间段的收益
-  // 正确做法：提现时固化当前收益到 usdt_total，同时更新 last_settlement_time 为当前时间
-  // 这样新利率只会影响未来的增量收益，不会错误地重新计算历史收益
+  // 🟢 关键修复：提现时只固化收益，不更新 last_settlement_time
+  // 原因：
+  // 1. last_settlement_time 应该记录用户首次达到 10k RAT 的时间，不应该被提现改变
+  // 2. 如果提现时重置 last_settlement_time，会导致后续收益从提现时间开始计算
+  // 3. 如果用户首次达到 10k 的时间早于提现时间，会丢失历史收益
+  // 4. 利率变更问题应该通过其他方式处理（如记录利率变更历史），而不是重置结算时间
   const createdAt = (user as any)?.created_at || new Date().toISOString();
   const nowIso = new Date(nowTime).toISOString();
+  
+  // 🟢 保留原始的 last_settlement_time，不更新
+  const originalLastSettlementTime = (user as any)?.last_settlement_time || null;
 
   const { error: lockErr } = await supabase
     .from('users')
@@ -161,10 +250,9 @@ export async function applyWithdraw(
         energy_locked: newEnergyLocked,
         usdt_total: newUsdtTotal, // 🟢 Lazy Settle: 固化收益
         usdt_locked: newUsdtLocked,
-        // 🔥 关键修复：更新 last_settlement_time 为提现时间，确保历史收益被正确固化
-        // 这样下次计算增量收益时，只会从提现时间开始，用当时的利率计算
-        // 防止利率变更后，用新利率错误地重新计算旧时间段的收益
-        last_settlement_time: nowIso, // ✅ 更新为提现时间
+        // 🟢 关键修复：不更新 last_settlement_time，保留首次达到 10k 的时间
+        // 这样收益计算始终从首次达到 10k 的时间开始，不会丢失历史收益
+        last_settlement_time: originalLastSettlementTime, // ✅ 保留原始时间
         created_at: createdAt,
         updated_at: nowIso,
       },

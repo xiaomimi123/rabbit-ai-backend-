@@ -95,19 +95,22 @@ async function main() {
 
   const rpcPool = new RpcPool(config.rpcUrls);
 
-  // provider factory with simple rotation on errors
-  let provider = rpcPool.current();
-  const getProvider = () => provider;
+  // 🟢 增强：使用 RpcPool 的智能选择（自动选择健康的节点）
+  const getProvider = () => rpcPool.current();
 
   // 🟢 为后台管理创建专用的 RPC Provider（如果配置了 ADMIN_RPC_URL）
   let adminProvider: ethers.providers.Provider | null = null;
   if (config.adminRpcUrl) {
-    adminProvider = new ethers.providers.JsonRpcProvider(config.adminRpcUrl);
+    // 🟢 为 Admin RPC 也配置超时
+    adminProvider = new ethers.providers.JsonRpcProvider({
+      url: config.adminRpcUrl,
+      timeout: 30000, // 30 秒超时
+    });
     console.log(`[startup] ✅ Admin RPC provider initialized: ${config.adminRpcUrl}`);
   } else {
     console.log('[startup] ℹ️  Admin RPC URL not configured, using default RPC pool for admin operations');
   }
-  const getAdminProvider = () => adminProvider || provider;
+  const getAdminProvider = () => adminProvider || getProvider();
 
   const app = await createServer({ getProvider, getAdminProvider });
 
@@ -120,9 +123,15 @@ async function main() {
     startIndexer(
       () => getProvider(),
       (e) => {
-        // rotate provider on any error (best effort)
-        provider = rpcPool.rotate();
+        // 🟢 增强：标记 RPC 失败，并轮换到下一个节点
+        rpcPool.markFailure();
+        const newProvider = rpcPool.rotate();
         app.log.warn({ err: (e as any)?.message || e }, 'indexer error -> rotate rpc');
+        return newProvider;
+      },
+      () => {
+        // 🟢 新增：标记 RPC 成功（用于健康检查）
+        rpcPool.markSuccess();
       }
     ).catch((e) => {
       app.log.error({ err: (e as any)?.message || e }, 'indexer fatal');

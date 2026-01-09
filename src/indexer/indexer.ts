@@ -299,19 +299,76 @@ async function runOnce(provider: ethers.providers.Provider): Promise<void> {
   console.log(`[indexer] synced blocks ${fromBlock}-${toBlock} (safeHead=${safeHead}, logs=${logs.length})`);
 }
 
-export async function startIndexer(providerFactory: () => ethers.providers.Provider, onFatal?: (e: unknown) => void) {
+/**
+ * 🟢 增强的 Indexer 启动函数
+ * - 指数退避：错误后等待时间逐渐增加
+ * - 错误分类：区分临时错误和永久错误
+ * - 成功回调：标记 RPC 成功，用于健康检查
+ */
+export async function startIndexer(
+  providerFactory: () => ethers.providers.Provider,
+  onFatal?: (e: unknown) => ethers.providers.Provider,
+  onSuccess?: () => void
+) {
   await ensureChainSyncRow();
+
+  let consecutiveErrors = 0;
+  const MAX_BACKOFF_MS = 5 * 60 * 1000; // 最大退避时间：5 分钟
+  const BASE_BACKOFF_MS = 1000; // 基础退避时间：1 秒
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       const provider = providerFactory();
       await runOnce(provider);
-    } catch (e) {
-      console.error('[indexer] error', (e as any)?.message || e);
-      onFatal?.(e);
+      
+      // 🟢 成功：重置错误计数，标记 RPC 成功
+      if (consecutiveErrors > 0) {
+        console.log(`[indexer] ✅ 恢复成功，重置错误计数（之前连续失败 ${consecutiveErrors} 次）`);
+        consecutiveErrors = 0;
+      }
+      onSuccess?.();
+      
+      // 正常轮询间隔
+      await sleep(config.pollIntervalMs);
+    } catch (e: any) {
+      consecutiveErrors++;
+      const errorMsg = e?.message || String(e);
+      
+      // 判断是否为临时错误（网络错误、超时等）
+      const isTransientError = 
+        errorMsg.includes('timeout') ||
+        errorMsg.includes('TIMEOUT') ||
+        errorMsg.includes('network') ||
+        errorMsg.includes('NETWORK_ERROR') ||
+        errorMsg.includes('ECONNREFUSED') ||
+        errorMsg.includes('ETIMEDOUT') ||
+        errorMsg.includes('ENOTFOUND');
+
+      console.error(`[indexer] error (连续失败 ${consecutiveErrors} 次)`, errorMsg);
+      
+      // 调用错误回调（轮换 RPC）
+      if (onFatal) {
+        try {
+          onFatal(e);
+        } catch (rotateError) {
+          console.error('[indexer] RPC 轮换失败', rotateError);
+        }
+      }
+
+      // 🟢 指数退避：临时错误时增加等待时间
+      if (isTransientError && consecutiveErrors > 1) {
+        const backoffMs = Math.min(
+          BASE_BACKOFF_MS * Math.pow(2, consecutiveErrors - 1),
+          MAX_BACKOFF_MS
+        );
+        console.warn(`[indexer] ⏳ 临时错误，${backoffMs}ms 后重试（指数退避）`);
+        await sleep(backoffMs);
+      } else {
+        // 永久错误或第一次错误：使用正常轮询间隔
+        await sleep(config.pollIntervalMs);
+      }
     }
-    await sleep(config.pollIntervalMs);
   }
 }
 
