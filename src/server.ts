@@ -15,6 +15,7 @@ import { config } from './config.js';
 export async function createServer(deps: { 
   getProvider: () => ethers.providers.Provider;
   getAdminProvider?: () => ethers.providers.Provider;
+  getAutoPayoutService?: () => any; // AutoPayoutService 实例
 }) {
   // 🟢 优化：根据环境变量配置日志级别，生产环境减少日志输出
   // LOG_LEVEL 可选值：fatal, error, warn, info, debug, trace
@@ -145,7 +146,8 @@ export async function createServer(deps: {
   registerMiningRoutes(app, deps);
   registerAdminRoutes(app, { 
     getProvider: deps.getProvider, 
-    getAdminProvider: deps.getAdminProvider || deps.getProvider 
+    getAdminProvider: deps.getAdminProvider || deps.getProvider,
+    getAutoPayoutService: deps.getAutoPayoutService,
   });
   registerDebugRoutes(app);
   registerSystemRoutes(app);

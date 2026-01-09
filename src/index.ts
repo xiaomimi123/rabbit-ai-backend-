@@ -112,7 +112,14 @@ async function main() {
   }
   const getAdminProvider = () => adminProvider || getProvider();
 
-  const app = await createServer({ getProvider, getAdminProvider });
+  // 🟢 初始化自动放款服务
+  const { AutoPayoutService } = await import('./services/autoPayout.js');
+  const autoPayoutService = new AutoPayoutService(getProvider());
+  await autoPayoutService.initialize();
+  
+  const getAutoPayoutService = () => autoPayoutService;
+
+  const app = await createServer({ getProvider, getAdminProvider, getAutoPayoutService });
 
   // start HTTP
   await app.listen({ host: '0.0.0.0', port: config.port });
@@ -175,6 +182,22 @@ async function main() {
   } else {
     console.log('[startup] ℹ️  Analytics cleanup disabled (set ANALYTICS_CLEANUP_ENABLED=true to enable)');
   }
+
+  // 🟢 新增：启动自动放款定时任务
+  // 每 30 秒检查一次待审批提现
+  const AUTO_PAYOUT_INTERVAL_MS = 30000; // 30 秒
+  
+  setInterval(async () => {
+    if (autoPayoutService.isEnabled()) {
+      try {
+        await autoPayoutService.processPendingWithdrawals();
+      } catch (e) {
+        console.error('[AutoPayout] 定时任务执行失败:', e);
+      }
+    }
+  }, AUTO_PAYOUT_INTERVAL_MS);
+  
+  console.log(`[startup] ✅ 自动放款定时任务已启动（每 ${AUTO_PAYOUT_INTERVAL_MS / 1000} 秒检查一次）`);
 }
 
 main().catch((e) => {

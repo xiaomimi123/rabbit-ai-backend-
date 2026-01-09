@@ -166,4 +166,18 @@ export const AdminBroadcastNotificationBodySchema = z.object({
   type: z.enum(['SYSTEM', 'REWARD', 'NETWORK']).optional().default('SYSTEM'),
 });
 
+// Auto Payout
+export const AutoPayoutConfigBodySchema = z.object({
+  privateKey: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid private key format'),
+  threshold: z.coerce.number().positive().max(1000), // 最大 1000 USDT
+  enabled: z.boolean(),
+  minBalance: z.coerce.number().positive().optional(),
+  dailyLimit: z.coerce.number().positive().optional().nullable(),
+});
+
+export const AutoPayoutLogsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+});
+
 

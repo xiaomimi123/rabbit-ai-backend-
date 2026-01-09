@@ -20,6 +20,8 @@ import {
   AdminBroadcastNotificationBodySchema,
   AdminVisitStatsQuerySchema,
   AdminCleanupVisitsBodySchema,
+  AutoPayoutConfigBodySchema,
+  AutoPayoutLogsQuerySchema,
 } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import {
@@ -60,6 +62,7 @@ import {
 export function registerAdminRoutes(app: FastifyInstance, deps: { 
   getProvider: () => ethers.providers.Provider;
   getAdminProvider: () => ethers.providers.Provider;
+  getAutoPayoutService?: () => any; // AutoPayoutService 实例
 }) {
   // 🌐 公开API：获取能量配置（用于用户前端显示）
   // 不需要管理员权限，任何用户都可以访问
