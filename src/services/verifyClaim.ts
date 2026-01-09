@@ -372,25 +372,45 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
   await ensureUserRow(address, validReferrer);
 
-  // ✅ 处理推荐奖励（如果有 ReferralReward 事件）
-  if (referralRewardWei && referralRewardReferrer) {
-    const refAddr = referralRewardReferrer.toLowerCase();
-    const { error: refRewardErr } = await supabase.from('referral_rewards').upsert(
-      {
-        tx_hash: txHash,
-        referrer_address: refAddr,
-        amount_wei: referralRewardWei,
-        block_number: receipt.blockNumber,
-        block_time: blockTimeIso || new Date().toISOString(), // ✅ 确保 block_time 不为 null
-        created_at: new Date().toISOString(),
-      },
-      { onConflict: 'tx_hash' }
-    );
-    if (refRewardErr) {
-      console.error('[verifyClaim] 插入推荐奖励失败:', refRewardErr);
+  // ✅ P0级修复：处理推荐奖励（使用 claims 表中的 referrer，带事务和行锁）
+  if (referralRewardWei) {
+    // 🟢 关键修复：使用 claims 表中的 referrer（用户实际注册时的推荐人）
+    // 而不是事件中的 referrer（可能不一致）
+    const referrerFromClaim = validReferrer.toLowerCase();
+    const referrerFromEvent = referralRewardReferrer?.toLowerCase() || null;
+    
+    // ⚠️ 验证：如果事件中的 referrer 与 claims 表中的 referrer 不一致，记录警告
+    if (referrerFromEvent && referrerFromEvent !== referrerFromClaim && referrerFromClaim !== '0x0000000000000000000000000000000000000000') {
+      console.warn(`[verifyClaim] ⚠️ 推荐人不一致: 事件=${referrerFromEvent}, claims=${referrerFromClaim}, tx=${txHash}`);
+    }
+    
+    // 🔒 使用数据库函数插入推荐奖励（带事务和行锁，防止并发问题）
+    // 该函数会：
+    // 1. 锁定 claims 表行，防止并发修改
+    // 2. 使用 claims 表中的 referrer 而不是事件中的 referrer
+    // 3. 锁定推荐人用户行，防止并发修改
+    // 4. 如果已存在记录，自动修复推荐人地址
+    const { data: rewardResult, error: rewardError } = await supabase.rpc('insert_referral_reward_safe', {
+      p_tx_hash: txHash,
+      p_claimer_address: address.toLowerCase(),
+      p_referrer_from_claim: referrerFromClaim,  // ✅ 使用 claims 表中的 referrer
+      p_referrer_from_event: referrerFromEvent,  // 事件中的 referrer（用于验证）
+      p_amount_wei: referralRewardWei,
+      p_block_number: receipt.blockNumber,
+      p_block_time: blockTimeIso || new Date().toISOString(),
+    });
+    
+    if (rewardError) {
+      console.error('[verifyClaim] ❌ 插入推荐奖励失败:', rewardError);
       // 不抛出错误，因为主要功能（claim）已经成功
+    } else if (rewardResult?.status === 'success') {
+      console.log(`[verifyClaim] ✅ 成功插入推荐奖励记录，推荐人: ${rewardResult.referrer}`);
+    } else if (rewardResult?.status === 'updated') {
+      console.log(`[verifyClaim] ✅ 已修复推荐奖励记录: ${rewardResult.old_referrer} -> ${rewardResult.new_referrer}`);
+    } else if (rewardResult?.status === 'skipped') {
+      console.log(`[verifyClaim] ℹ️ 推荐奖励记录已存在或跳过: ${rewardResult.reason}`);
     } else {
-      console.log('[verifyClaim] ✅ 成功插入推荐奖励记录');
+      console.warn(`[verifyClaim] ⚠️ 未知的推荐奖励处理状态:`, rewardResult);
     }
   }
 
