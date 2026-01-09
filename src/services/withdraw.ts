@@ -227,72 +227,36 @@ export async function applyWithdraw(
     }
   }
 
-  // 10. 🔒 原子更新：同时更新收益和锁定金额
-  // 注意：虽然 Supabase JS 客户端不支持真正的行锁，但通过业务逻辑保证一致性
+  // 10. ✅ P0级修复：使用数据库函数（带行锁和原子更新）
   // 🟢 关键修复：提现时只固化收益，不更新 last_settlement_time
   // 原因：
   // 1. last_settlement_time 应该记录用户首次达到 10k RAT 的时间，不应该被提现改变
   // 2. 如果提现时重置 last_settlement_time，会导致后续收益从提现时间开始计算
   // 3. 如果用户首次达到 10k 的时间早于提现时间，会丢失历史收益
   // 4. 利率变更问题应该通过其他方式处理（如记录利率变更历史），而不是重置结算时间
-  const createdAt = (user as any)?.created_at || new Date().toISOString();
-  const nowIso = new Date(nowTime).toISOString();
-  
-  // 🟢 保留原始的 last_settlement_time，不更新
   const originalLastSettlementTime = (user as any)?.last_settlement_time || null;
 
-  const { error: lockErr } = await supabase
-    .from('users')
-    .upsert(
-      {
-        address: addr,
-        energy_total: energyTotal,
-        energy_locked: newEnergyLocked,
-        usdt_total: newUsdtTotal, // 🟢 Lazy Settle: 固化收益
-        usdt_locked: newUsdtLocked,
-        // 🟢 关键修复：不更新 last_settlement_time，保留首次达到 10k 的时间
-        // 这样收益计算始终从首次达到 10k 的时间开始，不会丢失历史收益
-        last_settlement_time: originalLastSettlementTime, // ✅ 保留原始时间
-        created_at: createdAt,
-        updated_at: nowIso,
-      },
-      { onConflict: 'address' }
-    );
-  if (lockErr) throw lockErr;
+  const { data: withdrawResult, error: withdrawErr } = await supabase.rpc('process_withdraw_safe', {
+    p_address: addr,
+    p_amount: amount,
+    p_required_energy: requiredEnergy,
+    p_new_usdt_total: newUsdtTotal, // Lazy Settle: 固化收益
+    p_original_last_settlement_time: originalLastSettlementTime,
+  });
 
-  // 11. 创建提现记录
-  const { data: inserted, error: insErr } = await supabase
-    .from('withdrawals')
-    .insert({
-      address: addr,
-      amount,
-      status: 'Pending',
-      energy_locked_amount: requiredEnergy,
-      created_at: nowIso,
-      updated_at: nowIso,
-    })
-    .select('id,amount,status,created_at')
-    .single();
-
-  if (insErr) {
-    // 🔄 回滚：恢复锁定状态（best-effort）
-    // 注意：这里回滚到原始状态，包括原始的 last_settlement_time
-    const originalLastSettlementTime = (user as any)?.last_settlement_time || null;
-    await supabase.from('users').upsert(
-      {
-        address: addr,
-        energy_total: energyTotal,
-        energy_locked: energyLocked,
-        usdt_total: baseEarnings, // 恢复为基准收益（不包含增量）
-        usdt_locked: Number((user as any)?.usdt_locked || 0),
-        last_settlement_time: originalLastSettlementTime, // 恢复原始的结算时间
-        created_at: createdAt,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'address' }
-    );
-    throw insErr;
+  if (withdrawErr) {
+    console.error('[applyWithdraw] 数据库函数调用失败:', withdrawErr);
+    throw new ApiError('DATABASE_ERROR', withdrawErr.message, 500);
   }
+
+  if (!withdrawResult || !withdrawResult.ok) {
+    const errorMsg = withdrawResult?.message || withdrawResult?.code || 'Unknown error';
+    const errorCode = withdrawResult?.code || 'WITHDRAW_FAILED';
+    throw new ApiError(errorCode, errorMsg, 400);
+  }
+
+  // 11. 提现记录已由数据库函数创建
+  const inserted = { id: withdrawResult.id };
 
   // 🟢 发送 Telegram 提现申请通知（异步，不阻塞响应）
   setImmediate(async () => {

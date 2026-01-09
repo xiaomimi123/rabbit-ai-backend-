@@ -1082,26 +1082,31 @@ export async function adminAdjustUserEnergy(address: string, delta: number) {
   const addr = lower(address);
   if (!Number.isFinite(delta)) throw new ApiError('INVALID_REQUEST', 'Invalid delta', 400);
 
-  const u = await getUserEnergyRow(addr);
-  const nextTotal = Math.max(0, u.energyTotal + delta);
-  if (nextTotal < u.energyLocked) {
-    throw new ApiError('INVALID_STATE', 'energy_total cannot be less than energy_locked', 400);
+  // ✅ P0级修复：使用数据库函数（带行锁和原子更新）
+  const { data: result, error } = await supabase.rpc('admin_adjust_user_energy_safe', {
+    p_address: addr,
+    p_delta: delta,
+  });
+
+  if (error) {
+    console.error('[adminAdjustUserEnergy] 数据库函数调用失败:', error);
+    throw new ApiError('DATABASE_ERROR', error.message, 500);
   }
 
-  await updateUserBalances(
-    addr,
-    { energyTotal: nextTotal, energyLocked: u.energyLocked, usdtTotal: u.usdtTotal, usdtLocked: u.usdtLocked },
-    u.createdAt
-  );
+  if (!result || !result.ok) {
+    const errorMsg = result?.message || result?.error || 'Unknown error';
+    const errorCode = result?.error || 'ADJUST_FAILED';
+    throw new ApiError(errorCode, errorMsg, 400);
+  }
 
-  // 🟢 新增：记录管理员操作
+  // 🟢 记录管理员操作
   const operationType = delta > 0 ? 'AddEnergy' : 'DeductEnergy';
   await supabase.from('admin_operations').insert({
     address: addr,
     operation_type: operationType,
     amount: delta,
-    amount_before: u.energyTotal,
-    amount_after: nextTotal,
+    amount_before: result.old_energy_total,
+    amount_after: result.new_energy_total,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
@@ -1109,8 +1114,8 @@ export async function adminAdjustUserEnergy(address: string, delta: number) {
   return {
     ok: true,
     address: addr,
-    energyTotal: String(nextTotal),
-    energyLocked: String(u.energyLocked),
+    energyTotal: String(result.new_energy_total),
+    energyLocked: String(result.energy_locked),
   };
 }
 
@@ -1118,30 +1123,36 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
   const addr = lower(address);
   if (!Number.isFinite(delta)) throw new ApiError('INVALID_REQUEST', 'Invalid delta', 400);
 
-  const u = await getUserEnergyRow(addr);
-  const nextTotal = Math.max(0, u.usdtTotal + delta);
-  if (nextTotal < u.usdtLocked) {
-    throw new ApiError('INVALID_STATE', 'usdt_total cannot be less than usdt_locked', 400);
+  // ✅ P0级修复：使用数据库函数（带行锁和原子更新）
+  // 🟢 当管理员增加 USDT 时，同时更新 last_settlement_time
+  // 这样增量收益会从赠送时间点开始计算，而不是从旧的结算时间开始
+  const updateSettlementTime = delta > 0; // 只有增加时才更新结算时间
+
+  const { data: result, error } = await supabase.rpc('admin_adjust_user_usdt_safe', {
+    p_address: addr,
+    p_delta: delta,
+    p_update_settlement_time: updateSettlementTime,
+  });
+
+  if (error) {
+    console.error('[adminAdjustUserUsdt] 数据库函数调用失败:', error);
+    throw new ApiError('DATABASE_ERROR', error.message, 500);
   }
 
-  // 🟢 修复：当管理员增加 USDT 时，同时更新 last_settlement_time
-  // 这样增量收益会从赠送时间点开始计算，而不是从旧的结算时间开始
-  // 确保管理员赠送的 USDT 能正确显示在可提现金额中
-  await updateUserBalances(
-    addr,
-    { energyTotal: u.energyTotal, energyLocked: u.energyLocked, usdtTotal: nextTotal, usdtLocked: u.usdtLocked },
-    u.createdAt,
-    true // 🟢 关键：更新 last_settlement_time，确保增量收益从当前时间开始计算
-  );
+  if (!result || !result.ok) {
+    const errorMsg = result?.message || result?.error || 'Unknown error';
+    const errorCode = result?.error || 'ADJUST_FAILED';
+    throw new ApiError(errorCode, errorMsg, 400);
+  }
 
-  // 🟢 新增：记录管理员操作
+  // 🟢 记录管理员操作
   const operationType = delta > 0 ? 'AddUSDT' : 'DeductUSDT';
   await supabase.from('admin_operations').insert({
     address: addr,
     operation_type: operationType,
     amount: delta,
-    amount_before: u.usdtTotal,
-    amount_after: nextTotal,
+    amount_before: result.old_usdt_total,
+    amount_after: result.new_usdt_total,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
@@ -1149,8 +1160,8 @@ export async function adminAdjustUserUsdt(address: string, delta: number) {
   return {
     ok: true,
     address: addr,
-    usdtTotal: String(nextTotal),
-    usdtLocked: String(u.usdtLocked),
+    usdtTotal: String(result.new_usdt_total),
+    usdtLocked: String(result.usdt_locked),
   };
 }
 
