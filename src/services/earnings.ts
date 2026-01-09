@@ -152,6 +152,72 @@ export async function calculateUserEarnings(
     }
   }
 
+  // ========================================
+  // 🔒 P0级修复：资金入账时间戳机制（三步走）
+  // ========================================
+
+  // 第一步：资金来源审计（增强 - 使用绝对值阈值）
+  const EXTERNAL_TRANSFER_ABSOLUTE_THRESHOLD = 1000; // 1000 RAT 绝对阈值
+  const externalTransferAmount = balance - systemRecordedBalance;
+  const hasSignificantExternalTransfer = 
+    externalTransferAmount > EXTERNAL_TRANSFER_ABSOLUTE_THRESHOLD;
+
+  if (hasSignificantExternalTransfer) {
+    console.log(`[Earnings] 🚨 检测到大量外部转账: 用户 ${addr}`);
+    console.log(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT`);
+    console.log(`   当前链上余额: ${balance.toFixed(2)} RAT`);
+    console.log(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
+  }
+
+  // 第二步：VIP 门槛跨越判定（新增）
+  const justCrossedThreshold = 
+    systemRecordedBalance < 10000 && balance >= 10000;
+
+  if (justCrossedThreshold) {
+    console.log(`[Earnings] 🎯 用户刚跨过10k门槛`);
+    console.log(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT < 10,000`);
+    console.log(`   当前链上余额: ${balance.toFixed(2)} RAT >= 10,000`);
+    console.log(`   触发"门槛跨越"保护机制`);
+  }
+
+  // 第三步：重置起息日（新增）
+  if (hasSignificantExternalTransfer && justCrossedThreshold) {
+    // 🔒 关键保护：用户通过外部转账刚达到10k，必须从今天开始计息
+    const nowIso = new Date().toISOString();
+    
+    // 更新数据库
+    const { error: resetErr } = await supabase
+      .from('users')
+      .update({ 
+        last_settlement_time: nowIso,
+        updated_at: nowIso
+      })
+      .eq('address', addr);
+    
+    if (!resetErr) {
+      console.log(`[Earnings] 🔒 起息日强制重置为现在: ${nowIso}`);
+      console.log(`[Earnings] 📊 防止用户用外部转账本金 × 历史时间 = 虚假收益`);
+      console.log(`[Earnings] ✅ 用户将从今天开始产生持币生息收益`);
+      
+      // ⚠️ 重要：立即返回收益0，因为用户刚刚达标
+      return {
+        pendingUsdt: '0',
+        dailyRate,
+        currentTier,
+        holdingDays: 0,
+        balance: balance.toFixed(2),
+        grossEarnings: '0',
+        totalWithdrawn: '0',
+      };
+    } else {
+      console.error(`[Earnings] ⚠️ 重置起息日失败:`, resetErr);
+    }
+  }
+
+  // ========================================
+  // 继续原有的逻辑...
+  // ========================================
+
   // 🟢 关键修复：如果用户首次达到10k RAT，初始化 last_settlement_time
   // 问题：如果用户首次达到10k后没有再次领取空投，last_settlement_time 可能仍然是首次领取时间
   // 这会导致从首次领取开始计算收益，而不是从达到10k开始
@@ -170,9 +236,12 @@ export async function calculateUserEarnings(
   const currentBaseEarnings = Number((userRow as any)?.usdt_total || 0);
   
   // 情况A：从未固化过收益，且 last_settlement_time 是首次领取时间
+  // 🟢 修复：增加条件 - 只有没有大量外部转账的用户，才执行自动初始化
+  // 外部转账用户已经在"三步走"中处理，不会走到这里
   const needsInitialization = balance >= 10000 
     && currentBaseEarnings === 0 
-    && Math.abs(lastSettlementTime - firstClaimTime) < 1000; // 时间差小于1秒，认为是同一个时间点
+    && Math.abs(lastSettlementTime - firstClaimTime) < 1000 // 时间差小于1秒，认为是同一个时间点
+    && !hasSignificantExternalTransfer; // 🔒 新增：外部转账用户不执行自动初始化
   
   // 情况B：已固化过收益，但需要检查 last_settlement_time 是否合理
   // 如果通过 claims + referral_rewards 累计无法达到 10k，但当前余额 >= 10k，说明通过其他方式获得代币
