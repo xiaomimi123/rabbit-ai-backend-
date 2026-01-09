@@ -183,12 +183,28 @@ export async function calculateUserEarnings(
     console.log(`   触发"门槛跨越"保护机制`);
   }
 
-  // 🔒 P0修复：添加"起息日锁定"机制
-  // 如果用户已经有有效的USDT余额（>0），说明已经开始计息，不应该再重置起息日
+  // 🔒 P0修复：更严格的"起息日锁定"机制（三重保护）
   const currentUsdtTotal = Number((userRow as any)?.usdt_total || 0);
-  const hasValidEarnings = currentUsdtTotal > 0;
+  
+  // 保护1: 如果用户已经有有效的USDT余额（>0.01），不允许重置
+  const hasValidEarnings = currentUsdtTotal > 0.01;
+  
+  // 保护2: 如果起息日已经被设置过（不等于注册时间），不允许重置
+  const userCreatedTime = userRow?.created_at ? new Date(userRow.created_at).getTime() : Date.now();
+  const currentSettlementTime = userRow?.last_settlement_time 
+    ? new Date(userRow.last_settlement_time).getTime() 
+    : userCreatedTime;
+  const hasSettledBefore = Math.abs(currentSettlementTime - userCreatedTime) > 60000; // 时间差大于1分钟
+  
+  // 保护3: 如果起息日在过去24小时内被修改过，不允许重置
+  const settlementTimeAge = Date.now() - currentSettlementTime;
+  const wasRecentlyModified = settlementTimeAge < 24 * 3600 * 1000; // 24小时内
+  
+  // 🔒 三重保护：只有同时满足以下条件才允许重置起息日
   const shouldResetSettlementTime = 
-    !hasValidEarnings && // 🔒 关键：只有没有收益的用户才允许重置
+    !hasValidEarnings &&        // 没有收益
+    !hasSettledBefore &&         // 起息日从未被设置过
+    !wasRecentlyModified &&      // 起息日不是最近24小时内修改的
     hasSignificantExternalTransfer && 
     justCrossedThreshold;
 
