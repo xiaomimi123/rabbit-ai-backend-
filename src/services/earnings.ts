@@ -169,19 +169,31 @@ export async function calculateUserEarnings(
     console.log(`   外部转账金额: ${externalTransferAmount.toFixed(2)} RAT`);
   }
 
-  // 第二步：VIP 门槛跨越判定（新增）
+  // 第二步：VIP 门槛跨越判定（新增 + 🔧 P0修复：防止误判）
+  // 🔒 只有当系统余额远低于10k（<5000 RAT）时，才认为是"刚跨越门槛"
+  // 这样可以避免误判：系统余额 8,815 RAT 的用户不会被认为是"刚跨越"
+  const THRESHOLD_BUFFER = 5000; // 缓冲阈值：5000 RAT
   const justCrossedThreshold = 
-    systemRecordedBalance < 10000 && balance >= 10000;
+    systemRecordedBalance < THRESHOLD_BUFFER && balance >= 10000;
 
   if (justCrossedThreshold) {
-    console.log(`[Earnings] 🎯 用户刚跨过10k门槛`);
-    console.log(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT < 10,000`);
+    console.log(`[Earnings] 🎯 用户刚跨过10k门槛（系统余额 < ${THRESHOLD_BUFFER} RAT）`);
+    console.log(`   系统记录余额: ${systemRecordedBalance.toFixed(2)} RAT < ${THRESHOLD_BUFFER}`);
     console.log(`   当前链上余额: ${balance.toFixed(2)} RAT >= 10,000`);
     console.log(`   触发"门槛跨越"保护机制`);
   }
 
-  // 第三步：重置起息日（新增）
-  if (hasSignificantExternalTransfer && justCrossedThreshold) {
+  // 🔒 P0修复：添加"起息日锁定"机制
+  // 如果用户已经有有效的USDT余额（>0），说明已经开始计息，不应该再重置起息日
+  const currentUsdtTotal = Number((userRow as any)?.usdt_total || 0);
+  const hasValidEarnings = currentUsdtTotal > 0;
+  const shouldResetSettlementTime = 
+    !hasValidEarnings && // 🔒 关键：只有没有收益的用户才允许重置
+    hasSignificantExternalTransfer && 
+    justCrossedThreshold;
+
+  // 第三步：重置起息日（新增 + 🔧 P0修复）
+  if (shouldResetSettlementTime) {
     // 🔒 关键保护：用户通过外部转账刚达到10k，必须从今天开始计息
     const nowIso = new Date().toISOString();
     
