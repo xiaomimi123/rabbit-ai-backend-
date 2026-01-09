@@ -266,6 +266,29 @@ export class AutoPayoutService {
       const balance = await this.getUsdtBalance();
       if (balance < this.minBalance) {
         console.warn(`[AutoPayout] ⚠️ 钱包余额不足，停止自动放款。当前余额: ${balance.toFixed(2)} USDT，最小余额: ${this.minBalance.toFixed(2)} USDT`);
+        
+        // 🟢 发送余额不足告警（去重：每小时最多发送一次）
+        setImmediate(async () => {
+          try {
+            const lastAlertKey = 'auto_payout_low_balance_alert';
+            const lastAlertTime = await this.getLastAlertTime(lastAlertKey);
+            const now = Date.now();
+            const oneHour = 60 * 60 * 1000;
+            
+            if (!lastAlertTime || (now - lastAlertTime) > oneHour) {
+              const { sendAutoPayoutLowBalanceAlert } = await import('./telegram.js');
+              await sendAutoPayoutLowBalanceAlert({
+                currentBalance: balance,
+                minBalance: this.minBalance,
+                timestamp: new Date().toISOString(),
+              });
+              await this.setLastAlertTime(lastAlertKey, now);
+            }
+          } catch (e) {
+            console.error('[AutoPayout] Telegram 余额告警发送失败:', e);
+          }
+        });
+        
         this.isProcessing = false;
         return;
       }
@@ -275,6 +298,31 @@ export class AutoPayoutService {
         const todayTotal = await this.getTodayTotalPayout();
         if (todayTotal >= this.dailyLimit) {
           console.warn(`[AutoPayout] ⚠️ 今日自动放款总额已达上限: ${todayTotal.toFixed(2)} / ${this.dailyLimit.toFixed(2)} USDT`);
+          
+          // 🟢 发送达到限额告警（去重：每天最多发送一次）
+          setImmediate(async () => {
+            try {
+              const lastAlertKey = 'auto_payout_limit_reached_alert';
+              const lastAlertTime = await this.getLastAlertTime(lastAlertKey);
+              const now = Date.now();
+              const today = new Date(now);
+              today.setHours(0, 0, 0, 0);
+              const todayStart = today.getTime();
+              
+              if (!lastAlertTime || lastAlertTime < todayStart) {
+                const { sendAutoPayoutLimitReachedAlert } = await import('./telegram.js');
+                await sendAutoPayoutLimitReachedAlert({
+                  todayTotal,
+                  dailyLimit: this.dailyLimit!,
+                  timestamp: new Date().toISOString(),
+                });
+                await this.setLastAlertTime(lastAlertKey, now);
+              }
+            } catch (e) {
+              console.error('[AutoPayout] Telegram 限额告警发送失败:', e);
+            }
+          });
+          
           this.isProcessing = false;
           return;
         }
@@ -362,10 +410,42 @@ export class AutoPayoutService {
       // 7. 记录成功日志
       await this.logSuccess(withdrawalId, amount, receipt.transactionHash);
       console.log(`[AutoPayout] ✅ 提现 ${withdrawalId} 处理完成`);
+
+      // 8. 🟢 发送 Telegram 自动放款成功通知
+      setImmediate(async () => {
+        try {
+          const { sendAutoPayoutSuccessNotification } = await import('./telegram.js');
+          await sendAutoPayoutSuccessNotification({
+            address: userAddress,
+            amount,
+            txHash: receipt.transactionHash,
+            withdrawalId,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (e) {
+          console.error('[AutoPayout] Telegram 通知发送失败（不影响放款）:', e);
+        }
+      });
     } catch (error: any) {
       console.error(`[AutoPayout] ❌ 处理提现失败 (${withdrawalId}):`, error);
       const errorMessage = error.message || '未知错误';
       await this.logFailure(withdrawalId, amount, errorMessage);
+
+      // 🟢 发送 Telegram 自动放款失败通知
+      setImmediate(async () => {
+        try {
+          const { sendAutoPayoutFailedNotification } = await import('./telegram.js');
+          await sendAutoPayoutFailedNotification({
+            address: userAddress,
+            amount,
+            withdrawalId,
+            errorMessage,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (e) {
+          console.error('[AutoPayout] Telegram 通知发送失败（不影响日志）:', e);
+        }
+      });
     }
   }
 
@@ -504,6 +584,46 @@ export class AutoPayoutService {
       })),
       total: count || 0,
     };
+  }
+
+  /**
+   * 获取上次告警时间（用于去重）
+   */
+  private async getLastAlertTime(key: string): Promise<number | null> {
+    try {
+      const { data } = await supabase
+        .from('system_config')
+        .select('value')
+        .eq('key', key)
+        .maybeSingle();
+      
+      if (data && data.value) {
+        return typeof data.value === 'number' ? data.value : parseInt(String(data.value), 10);
+      }
+      return null;
+    } catch (error) {
+      console.error('[AutoPayout] 获取告警时间失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 设置上次告警时间（用于去重）
+   */
+  private async setLastAlertTime(key: string, timestamp: number): Promise<void> {
+    try {
+      await supabase
+        .from('system_config')
+        .upsert({
+          key,
+          value: timestamp,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'key',
+        });
+    } catch (error) {
+      console.error('[AutoPayout] 设置告警时间失败:', error);
+    }
   }
 }
 

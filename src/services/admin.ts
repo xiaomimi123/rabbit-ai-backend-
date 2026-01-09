@@ -443,6 +443,22 @@ export async function rejectWithdrawal(withdrawalId: string) {
     .eq('id', withdrawalId);
   if (upErr) throw upErr;
 
+  // 🟢 发送 Telegram 提现拒绝通知（异步，不阻塞响应）
+  setImmediate(async () => {
+    try {
+      const { sendWithdrawalRejectedNotification } = await import('./telegram.js');
+      await sendWithdrawalRejectedNotification({
+        address: addr,
+        amount: String(amount),
+        withdrawalId,
+        reason: undefined, // 可以扩展 rejectWithdrawal 函数接受 reason 参数
+        timestamp: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error('[rejectWithdrawal] Telegram 通知发送失败（不影响拒绝）:', e);
+    }
+  });
+
   return { ok: true, id: withdrawalId, status: 'Rejected' };
 }
 
