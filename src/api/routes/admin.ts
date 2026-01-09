@@ -709,6 +709,118 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
       return reply.status(400).send(err);
     }
   });
+
+  // ==================== 自动放款 API ====================
+  
+  // 配置自动放款
+  app.post('/api/admin/system/auto-payout/configure', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    
+    try {
+      const body = AutoPayoutConfigBodySchema.safeParse(req.body || {});
+      if (!body.success) {
+        return reply.status(400).send({
+          ok: false,
+          error: 'Invalid request body',
+          details: body.error.errors,
+        });
+      }
+
+      // 获取管理员地址（用于记录更新人）
+      const adminAddress = (req as any).adminAddress || null;
+
+      // 获取自动放款服务实例（从 deps 传入）
+      const { getAutoPayoutService } = deps as any;
+      if (!getAutoPayoutService) {
+        return reply.status(500).send({
+          ok: false,
+          error: 'Auto payout service not initialized',
+        });
+      }
+
+      const autoPayoutService = getAutoPayoutService();
+      await autoPayoutService.configure({
+        privateKey: body.data.privateKey,
+        threshold: body.data.threshold,
+        enabled: body.data.enabled,
+        minBalance: body.data.minBalance,
+        dailyLimit: body.data.dailyLimit || undefined,
+      }, adminAddress);
+
+      const config = await autoPayoutService.getConfig();
+      
+      return {
+        ok: true,
+        walletAddress: config.walletAddress,
+        threshold: config.threshold,
+        enabled: config.enabled,
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // 获取自动放款配置
+  app.get('/api/admin/system/auto-payout/config', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    
+    try {
+      const { getAutoPayoutService } = deps as any;
+      if (!getAutoPayoutService) {
+        return reply.status(500).send({
+          ok: false,
+          error: 'Auto payout service not initialized',
+        });
+      }
+
+      const autoPayoutService = getAutoPayoutService();
+      const config = await autoPayoutService.getConfig();
+      
+      return {
+        ok: true,
+        ...config,
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // 获取自动放款日志
+  app.get('/api/admin/system/auto-payout/logs', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    
+    try {
+      const query = AutoPayoutLogsQuerySchema.safeParse(req.query || {});
+      if (!query.success) {
+        return reply.status(400).send({
+          ok: false,
+          error: 'Invalid query parameters',
+          details: query.error.errors,
+        });
+      }
+
+      const { getAutoPayoutService } = deps as any;
+      if (!getAutoPayoutService) {
+        return reply.status(500).send({
+          ok: false,
+          error: 'Auto payout service not initialized',
+        });
+      }
+
+      const autoPayoutService = getAutoPayoutService();
+      const logs = await autoPayoutService.getLogs(query.data.limit, query.data.offset);
+      
+      return {
+        ok: true,
+        ...logs,
+      };
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
 }
 
 
