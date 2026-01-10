@@ -460,7 +460,33 @@ export class AutoPayoutService {
     const decimals = await this.usdtContract.decimals();
     const amountWei = ethers.utils.parseUnits(amount.toFixed(6), decimals);
 
-    return await this.usdtContract.connect(this.wallet).transfer(to, amountWei);
+    // 🔧 动态获取网络 Gas Price
+    let gasPrice: ethers.BigNumber;
+    try {
+      const networkGasPrice = await this.provider.getGasPrice();
+      
+      // 策略: currentGasPrice * 1.2, 最大不超过 0.5 Gwei
+      const maxGasPrice = ethers.utils.parseUnits('0.5', 'gwei'); // 0.5 Gwei 上限
+      const recommendedGasPrice = networkGasPrice.mul(120).div(100); // 1.2倍
+      
+      gasPrice = recommendedGasPrice.gt(maxGasPrice) ? maxGasPrice : recommendedGasPrice;
+      
+      console.log(`[AutoPayout] 💰 Gas Price 策略:`);
+      console.log(`  - 网络当前: ${ethers.utils.formatUnits(networkGasPrice, 'gwei')} Gwei`);
+      console.log(`  - 建议使用: ${ethers.utils.formatUnits(recommendedGasPrice, 'gwei')} Gwei`);
+      console.log(`  - 实际使用: ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
+      console.log(`  - 上限保护: 0.5 Gwei`);
+    } catch (error) {
+      // 如果获取失败，使用保守的默认值 0.3 Gwei
+      gasPrice = ethers.utils.parseUnits('0.3', 'gwei');
+      console.warn('[AutoPayout] ⚠️ 获取网络 Gas Price 失败，使用默认值: 0.3 Gwei');
+    }
+
+    // 🚀 发送交易时显式指定 Gas Price
+    return await this.usdtContract.connect(this.wallet).transfer(to, amountWei, {
+      gasPrice: gasPrice,
+      gasLimit: 100000, // USDT 转账通常需要 50,000-80,000 gas，设置为 100,000 确保安全
+    });
   }
 
   /**
