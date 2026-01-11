@@ -15,7 +15,7 @@
  * - 资源友好：使用间隔扫描，不占用太多数据库资源
  */
 
-import { supabase } from '../db/supabase.js';
+import { supabase } from '../infra/supabase.js';
 import type { ethers } from 'ethers';
 import { verifyClaim } from './verifyClaim.js';
 
@@ -223,11 +223,11 @@ export class CompensationScanner {
     try {
       // 动态导入 telegram 服务，避免循环依赖
       const { sendSystemErrorAlert } = await import('./telegram.js');
-      await sendSystemErrorAlert(
-        '补偿扫描告警',
-        message,
-        { timestamp: new Date().toISOString() }
-      );
+      await sendSystemErrorAlert({
+        type: 'CRITICAL_ERROR',
+        message: `补偿扫描告警: ${message}`,
+        timestamp: new Date().toISOString()
+      });
     } catch (error) {
       console.error('[CompensationScanner] 发送 Telegram 告警失败:', error);
     }
