@@ -564,6 +564,23 @@ export async function completeWithdrawal(params: {
     .eq('id', params.withdrawalId);
   if (upErr) throw upErr;
 
+  // 🟢 新增：记录能量最终扣除到 energy_audit_log（提现完成，能量从 locked 真正扣除）
+  try {
+    await supabase.from('energy_audit_log').insert({
+      user_address: userAddr,
+      energy_before: u.energyTotal,
+      energy_after: nextEnergyTotal,
+      energy_delta: 0 - energyLockedAmount, // 负数表示扣除
+      reason: 'withdraw_completed',
+      tx_hash: params.payoutTxHash, // 使用区块链交易哈希
+      referrer_address: null,
+    });
+    console.log(`[completeWithdrawal] ✅ 已记录能量最终扣除到 energy_audit_log: -${energyLockedAmount}`);
+  } catch (auditErr) {
+    console.error('[completeWithdrawal] ⚠️ 记录能量审计日志失败（不影响提现）:', auditErr);
+    // 不抛出错误，审计记录失败不应该阻止提现
+  }
+
   // 🟢 事件驱动同步：提现成功后立即同步该用户的 RAT 余额
   try {
     const { syncSingleUserRatBalance } = await import('./ratBalanceSync.js');

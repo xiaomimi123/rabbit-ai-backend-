@@ -374,6 +374,23 @@ export async function applyWithdraw(
   // 11. 提现记录已由数据库函数创建
   const inserted = { id: withdrawResult.id };
 
+  // 🟢 新增：记录能量扣除到 energy_audit_log（提现锁定能量）
+  try {
+    await supabase.from('energy_audit_log').insert({
+      user_address: addr,
+      energy_before: energyTotal,
+      energy_after: energyTotal, // 提现时能量 total 不变，只是 locked 增加
+      energy_delta: 0 - requiredEnergy, // 负数表示扣除/锁定
+      reason: 'withdraw_lock',
+      tx_hash: inserted.id, // 使用提现ID作为关联
+      referrer_address: null,
+    });
+    console.log(`[applyWithdraw] ✅ 已记录能量扣除到 energy_audit_log: -${requiredEnergy}`);
+  } catch (auditErr) {
+    console.error('[applyWithdraw] ⚠️ 记录能量审计日志失败（不影响提现）:', auditErr);
+    // 不抛出错误，审计记录失败不应该阻止提现
+  }
+
   // 🟢 发送 Telegram 提现申请通知（异步，不阻塞响应）
   setImmediate(async () => {
     try {
