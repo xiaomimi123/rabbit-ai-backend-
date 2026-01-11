@@ -53,7 +53,7 @@ async function retryRpc<T>(fn: () => Promise<T>, opts?: { attempts?: number; bas
   throw lastErr;
 }
 
-async function ensureUserRow(address: string, referrer: string) {
+async function ensureUserRow(address: string, referrer: string): Promise<boolean> {
   const addr = address.toLowerCase();
   const ref = (referrer || '0x0000000000000000000000000000000000000000').toLowerCase();
 
@@ -64,6 +64,9 @@ async function ensureUserRow(address: string, referrer: string) {
     .maybeSingle();
   if (error) throw error;
 
+  // 🟢 判断是否是新用户（第一次领取空投）
+  const isNewUser = !data;
+  
   const createdAt = (data as any)?.created_at || new Date().toISOString();
   const existingRef = String((data as any)?.referrer_address || '').toLowerCase();
   const nextRef = existingRef || (ref !== '0x0000000000000000000000000000000000000000' ? ref : null);
@@ -82,6 +85,9 @@ async function ensureUserRow(address: string, referrer: string) {
     { onConflict: 'address' }
   );
   if (upErr) throw upErr;
+  
+  // 🟢 返回是否是新用户
+  return isNewUser;
 }
 
 async function addEnergyOnSuccessfulClaim(address: string) {
@@ -157,7 +163,14 @@ async function checkProcessClaimEnergyFunction(): Promise<boolean> {
   }
 }
 
-export async function verifyClaim(params: { provider: ethers.providers.Provider; address: string; txHash: string; referrer: string }) {
+export async function verifyClaim(params: { 
+  provider: ethers.providers.Provider; 
+  address: string; 
+  txHash: string; 
+  referrer: string;
+  ipAddress?: string;  // 🟢 新增：用户IP地址
+  country?: string;     // 🟢 新增：用户所在国家
+}) {
   const address = params.address.toLowerCase();
   const txHash = params.txHash;
   const expectedTo = config.airdropContract;
@@ -370,7 +383,25 @@ export async function verifyClaim(params: { provider: ethers.providers.Provider;
   }
 
   // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
-  await ensureUserRow(address, validReferrer);
+  const isNewUser = await ensureUserRow(address, validReferrer);
+  
+  // 🟢 新增：如果是新用户（第一次领取空投），发送 Telegram 注册通知
+  if (isNewUser) {
+    try {
+      const { sendUserRegistrationNotification } = await import('./telegram.js');
+      await sendUserRegistrationNotification({
+        address: address,
+        referrer: validReferrer !== '0x0000000000000000000000000000000000000000' ? validReferrer : null,
+        timestamp: blockTimeIso || new Date().toISOString(),
+        country: params.country,
+        ipAddress: params.ipAddress,
+      });
+      console.log(`[verifyClaim] ✅ 已发送新用户注册通知: ${address}${params.country ? ` (${params.country})` : ''}`);
+    } catch (error) {
+      console.error('[verifyClaim] ❌ 发送新用户注册通知失败:', error);
+      // 不抛出错误，不影响主流程
+    }
+  }
 
   // ✅ P0级修复：处理推荐奖励（使用 claims 表中的 referrer，带事务和行锁）
   if (referralRewardWei) {
