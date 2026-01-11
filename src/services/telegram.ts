@@ -532,6 +532,8 @@ export async function sendUserRegistrationNotification(data: {
   address: string;
   referrer: string | null;
   timestamp: string;
+  country?: string; // 🟢 新增：用户所在国家
+  ipAddress?: string; // 🟢 新增：用户IP地址
 }): Promise<void> {
   if (!bot || !config.telegram.enabled) {
     console.log('[Telegram] 跳过通知发送（Bot 未初始化或功能已禁用）');
@@ -544,12 +546,19 @@ export async function sendUserRegistrationNotification(data: {
         ? `👥 推荐人: <code>${data.referrer}</code>`
         : '👥 推荐人: 无（直接注册）';
 
+      // 🟢 新增：地域信息显示
+      const locationInfo = data.country 
+        ? `🌍 注册地区: <b>${data.country}</b>${data.ipAddress ? ` (${data.ipAddress})` : ''}`
+        : data.ipAddress 
+          ? `🌍 注册IP: <code>${data.ipAddress}</code>`
+          : '';
+
       const message = `
 👤 <b>新用户注册</b>
 
 🎉 用户地址: <code>${data.address}</code>
 ${referrerInfo}
-🕒 注册时间: ${new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
+${locationInfo ? `${locationInfo}\n` : ''}🕒 注册时间: ${new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
 
 📊 当前用户总数: 查看后台管理系统
       `.trim();
@@ -559,7 +568,7 @@ ${referrerInfo}
         disable_web_page_preview: true,
       });
 
-      console.log(`[Telegram] ✅ 用户注册通知已发送: ${data.address}`);
+      console.log(`[Telegram] ✅ 用户注册通知已发送: ${data.address}${data.country ? ` (${data.country})` : ''}`);
     } catch (error) {
       console.error('[Telegram] ❌ 发送用户注册通知失败:', error);
       throw error;
