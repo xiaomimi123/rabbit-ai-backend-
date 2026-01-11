@@ -195,8 +195,26 @@ async function runOnce(provider: ethers.providers.Provider): Promise<void> {
     iface.getEventTopic('CooldownReset'),
   ];
 
+  // 🟢 动态批次大小：快速追赶模式
+  const blocksBehind = safeHead - fromBlock + 1;
+  let batchSize = config.batchBlocks; // 默认 2000
+  
+  if (blocksBehind > 1000000) {
+    // 超过 100 万个区块落后：使用超大批次（10万个区块）
+    batchSize = 100000;
+    console.log(`[indexer] 🚀 超快速追赶模式：${blocksBehind} 个区块落后，批次大小 ${batchSize}`);
+  } else if (blocksBehind > 100000) {
+    // 超过 10 万个区块落后：使用大批次（5万个区块）
+    batchSize = 50000;
+    console.log(`[indexer] 🚀 快速追赶模式：${blocksBehind} 个区块落后，批次大小 ${batchSize}`);
+  } else if (blocksBehind > 10000) {
+    // 超过 1 万个区块落后：使用中等批次（1万个区块）
+    batchSize = 10000;
+    console.log(`[indexer] ⚡ 中速追赶模式：${blocksBehind} 个区块落后，批次大小 ${batchSize}`);
+  }
+  
   // Fetch logs with adaptive range split on RPC limits (-32005)
-  let span = Math.min(config.batchBlocks, safeHead - fromBlock + 1);
+  let span = Math.min(batchSize, safeHead - fromBlock + 1);
   let attempt = 0;
   let backoffMs = 2_000;
   let logs: ethers.providers.Log[] = [];
@@ -304,6 +322,7 @@ async function runOnce(provider: ethers.providers.Provider): Promise<void> {
  * - 指数退避：错误后等待时间逐渐增加
  * - 错误分类：区分临时错误和永久错误
  * - 成功回调：标记 RPC 成功，用于健康检查
+ * - 动态轮询间隔：快速追赶时使用短间隔（1秒），正常同步时使用长间隔（5秒）
  */
 export async function startIndexer(
   providerFactory: () => ethers.providers.Provider,
@@ -329,8 +348,22 @@ export async function startIndexer(
       }
       onSuccess?.();
       
-      // 正常轮询间隔
-      await sleep(config.pollIntervalMs);
+      // 🟢 动态轮询间隔：快速追赶时使用短间隔
+      const latest = await provider.getBlockNumber();
+      const safeHead = Math.max(0, latest - config.confirmations);
+      const last = await getLastBlockFromDb();
+      const blocksBehind = safeHead - last;
+      
+      let pollInterval = config.pollIntervalMs; // 默认 5 秒
+      if (blocksBehind > 10000) {
+        // 超过 1 万个区块落后：使用 1 秒间隔
+        pollInterval = 1000;
+      } else if (blocksBehind > 1000) {
+        // 超过 1000 个区块落后：使用 2 秒间隔
+        pollInterval = 2000;
+      }
+      
+      await sleep(pollInterval);
     } catch (e: any) {
       consecutiveErrors++;
       const errorMsg = e?.message || String(e);
