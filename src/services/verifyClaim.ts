@@ -194,8 +194,26 @@ export async function verifyClaim(params: {
   if (exErr) throw exErr;
   if (existing) {
     // Even if claim exists, still ensure user exists and energy awarded (idempotent).
-    await ensureUserRow(address, params.referrer);
+    const isNewUser = await ensureUserRow(address, validReferrer);  // 🟢 修复：保存返回值
     await awardEnergyOnceForTx(address, txHash);
+    
+    // 🟢 新增：如果是新用户，也发送 Telegram 注册通知（补发历史用户通知）
+    if (isNewUser) {
+      try {
+        const { sendUserRegistrationNotification } = await import('./telegram.js');
+        await sendUserRegistrationNotification({
+          address: address,
+          referrer: validReferrer !== '0x0000000000000000000000000000000000000000' ? validReferrer : null,
+          timestamp: (existing as any).block_time || new Date().toISOString(),
+          country: params.country,
+          ipAddress: params.ipAddress,
+        });
+        console.log(`[verifyClaim] ✅ 已补发新用户注册通知（历史交易）: ${address}${params.country ? ` (${params.country})` : ''}`);
+      } catch (error) {
+        console.error('[verifyClaim] ❌ 补发新用户注册通知失败:', error);
+        // 不抛出错误，不影响主流程
+      }
+    }
     
     // ✅ 注意：对于已存在的交易，RPC 函数会直接返回 skipped，不会重复计算能量
     // 这里我们只需要确保用户记录存在即可
