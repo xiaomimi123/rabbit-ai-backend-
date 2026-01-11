@@ -474,7 +474,7 @@ export async function sendTestMessage(): Promise<{ ok: boolean; message?: string
  * @param data 异常信息
  */
 export async function sendSystemErrorAlert(data: {
-  type: 'RPC_FAILURE' | 'DATABASE_ERROR' | 'CRITICAL_ERROR';
+  type: 'RPC_FAILURE' | 'DATABASE_ERROR' | 'CRITICAL_ERROR' | 'BLOCK_HEIGHT_ALERT';
   message: string;
   details?: string;
   timestamp: string;

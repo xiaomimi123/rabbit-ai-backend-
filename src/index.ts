@@ -130,6 +130,18 @@ async function main() {
     // 补偿扫描失败不影响主服务
   }
 
+  // 🔥 新增：初始化区块高度监控服务（P0级优化 - 防止区块落后）
+  console.log('[startup] 🚀 正在初始化区块高度监控服务...');
+  try {
+    const { BlockHeightMonitor } = await import('./services/blockHeightMonitor.js');
+    const blockHeightMonitor = new BlockHeightMonitor(getProvider());
+    blockHeightMonitor.start();
+    console.log('[startup] ✅ 区块高度监控服务已启动（每 5 分钟检查一次，自动检测区块落后）');
+  } catch (e) {
+    console.warn('[startup] ⚠️  区块高度监控服务初始化失败，但不影响主服务:', e);
+    // 监控服务失败不影响主服务
+  }
+
   const app = await createServer({ getProvider, getAdminProvider, getAutoPayoutService });
 
   // start HTTP
