@@ -491,12 +491,14 @@ export async function sendSystemErrorAlert(data: {
         RPC_FAILURE: '🔌',
         DATABASE_ERROR: '💾',
         CRITICAL_ERROR: '🔥',
+        BLOCK_HEIGHT_ALERT: '📊',
       };
 
       const typeName = {
         RPC_FAILURE: 'RPC 连接故障',
         DATABASE_ERROR: '数据库连接错误',
         CRITICAL_ERROR: '严重系统错误',
+        BLOCK_HEIGHT_ALERT: '区块高度监控告警',
       };
 
       const message = `
