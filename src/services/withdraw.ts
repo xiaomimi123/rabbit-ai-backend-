@@ -379,44 +379,43 @@ export async function applyWithdraw(
     try {
       const { sendWithdrawalPendingNotification } = await import('./telegram.js');
       
-      // 🟢 增强：获取用户画像数据（用于大额告警）
+      // 🟢 优化：获取用户画像数据（所有提现都显示能量值）
       let userStats: { ratBalance: number; energyAvailable: number; totalEarnings: number; vipLevel: number } | undefined;
       const isLargeWithdrawal = amount >= Number(config.withdrawAlertThreshold || 1000);
       
-      if (isLargeWithdrawal) {
-        try {
-          // 查询用户数据
-          const { data: userData } = await supabase
-            .from('users')
-            .select('rat_balance_wei,energy_total,energy_locked,usdt_total')
-            .eq('address', addr)
-            .maybeSingle();
-          
-          if (userData) {
-            let ratBalance = 0;
-            try {
-              const ratBalanceWei = userData.rat_balance_wei || '0';
-              ratBalance = parseFloat(ethers.utils.formatEther(ratBalanceWei));
-            } catch (e) {
-              console.warn(`[applyWithdraw] Failed to parse RAT balance:`, e);
-            }
-            
-            const energyTotal = Number(userData.energy_total || 0);
-            const energyLocked = Number(userData.energy_locked || 0);
-            const energyAvailable = Math.max(0, energyTotal - energyLocked);
-            const totalEarnings = Number(userData.usdt_total || 0);
-            const vipInfo = getVipTierByBalance(ratBalance);
-            
-            userStats = {
-              ratBalance,
-              energyAvailable,
-              totalEarnings,
-              vipLevel: vipInfo.tier,
-            };
+      // 🟢 修改：所有提现都获取用户数据（用于显示剩余能量）
+      try {
+        // 查询用户数据
+        const { data: userData } = await supabase
+          .from('users')
+          .select('rat_balance_wei,energy_total,energy_locked,usdt_total')
+          .eq('address', addr)
+          .maybeSingle();
+        
+        if (userData) {
+          let ratBalance = 0;
+          try {
+            const ratBalanceWei = userData.rat_balance_wei || '0';
+            ratBalance = parseFloat(ethers.utils.formatEther(ratBalanceWei));
+          } catch (e) {
+            console.warn(`[applyWithdraw] Failed to parse RAT balance:`, e);
           }
-        } catch (e) {
-          console.warn('[applyWithdraw] Failed to fetch user stats for notification:', e);
+          
+          const energyTotal = Number(userData.energy_total || 0);
+          const energyLocked = Number(userData.energy_locked || 0);
+          const energyAvailable = Math.max(0, energyTotal - energyLocked);
+          const totalEarnings = Number(userData.usdt_total || 0);
+          const vipInfo = getVipTierByBalance(ratBalance);
+          
+          userStats = {
+            ratBalance,
+            energyAvailable,
+            totalEarnings,
+            vipLevel: vipInfo.tier,
+          };
         }
+      } catch (e) {
+        console.warn('[applyWithdraw] Failed to fetch user stats for notification:', e);
       }
       
       await sendWithdrawalPendingNotification({
