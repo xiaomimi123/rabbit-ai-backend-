@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rabbit AI - 生产环境收益验证工具</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 800px;
+      width: 100%;
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+    
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+    
+    .content {
+      padding: 30px;
+    }
+    
+    .input-group {
+      margin-bottom: 20px;
+    }
+    
+    .input-group label {
+      display: block;
+      margin-bottom: 8px;
+      color: #333;
+      font-weight: 600;
+    }
+    
+    .input-group input {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+    
+    .input-group input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .btn {
+      width: 100%;
+      padding: 15px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn:active {
+      transform: translateY(0);
+    }
+    
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    .result {
+      margin-top: 30px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 12px;
+      border-left: 4px solid #667eea;
+    }
+    
+    .result h2 {
+      color: #333;
+      margin-bottom: 15px;
+      font-size: 20px;
+    }
+    
+    .result-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .result-item:last-child {
+      border-bottom: none;
+    }
+    
+    .result-label {
+      color: #666;
+      font-weight: 500;
+    }
+    
+    .result-value {
+      color: #333;
+      font-weight: 600;
+    }
+    
+    .status-success {
+      background: #d4edda;
+      border-left-color: #28a745;
+    }
+    
+    .status-error {
+      background: #f8d7da;
+      border-left-color: #dc3545;
+    }
+    
+    .status-warning {
+      background: #fff3cd;
+      border-left-color: #ffc107;
+    }
+    
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-top: 20px;
+    }
+    
+    .comparison-card {
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      text-align: center;
+    }
+    
+    .comparison-card h3 {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 10px;
+    }
+    
+    .comparison-card .value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #667eea;
+    }
+    
+    .comparison-card.error .value {
+      color: #dc3545;
+    }
+    
+    .loading {
+      text-align: center;
+      padding: 40px;
+    }
+    
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #667eea;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .footer {
+      padding: 20px;
+      text-align: center;
+      color: #666;
+      font-size: 12px;
+      background: #f8f9fa;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔍 Rabbit AI 收益验证工具</h1>
+      <p>验证生产环境VIP日利率修复是否生效</p>
+    </div>
+    
+    <div class="content">
+      <div class="input-group">
+        <label for="userAddress">用户地址</label>
+        <input 
+          type="text" 
+          id="userAddress" 
+          placeholder="输入钱包地址，如：0x9897f1f7ee7c1c443e28a52fe80ed514cf65eefe"
+          value="0x9897f1f7ee7c1c443e28a52fe80ed514cf65eefe"
+        >
+      </div>
+      
+      <div class="input-group">
+        <label for="apiUrl">API地址</label>
+        <input 
+          type="text" 
+          id="apiUrl" 
+          placeholder="API基础URL"
+          value="https://rabbit-ai-backend.onrender.com"
+        >
+      </div>
+      
+      <button class="btn" onclick="runTest()" id="testBtn">
+        开始验证
+      </button>
+      
+      <div id="output"></div>
+    </div>
+    
+    <div class="footer">
+      生成时间: 2026-01-11 | Rabbit AI Team
+    </div>
+  </div>
+
+  <script>
+    async function runTest() {
+      const output = document.getElementById('output');
+      const btn = document.getElementById('testBtn');
+      const userAddress = document.getElementById('userAddress').value.trim();
+      const apiUrl = document.getElementById('apiUrl').value.trim();
+      
+      if (!userAddress) {
+        alert('请输入用户地址！');
+        return;
+      }
+      
+      btn.disabled = true;
+      btn.textContent = '验证中...';
+      
+      output.innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top: 20px;">正在连接生产环境...</p></div>';
+      
+      try {
+        const response = await fetch(`${apiUrl}/api/user/earnings?address=${userAddress}`);
+        
+        if (!response.ok) {
+          throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        // 提取数据
+        const balance = data.balance || 0;
+        const dailyRate = data.dailyRate || 0;
+        const pendingUsdt = parseFloat(data.pendingUsdt) || 0;
+        const daysElapsed = data.daysElapsed || 0;
+        const currentTier = data.currentTier || 0;
+        
+        // 计算预期值
+        const RAT_PRICE = 0.01;
+        const expectedDailyEarnings = balance * RAT_PRICE * (dailyRate / 100);
+        const expectedEarnings = expectedDailyEarnings * daysElapsed;
+        const actualDailyEarnings = pendingUsdt / daysElapsed;
+        
+        // 修复前的计算（错误版本）
+        const earningsBefore = balance * RAT_PRICE * (dailyRate / 100 / 100) * daysElapsed;
+        
+        // 判断修复是否生效
+        const errorRate = Math.abs(actualDailyEarnings - expectedDailyEarnings) / expectedDailyEarnings;
+        const isFixed = errorRate < 0.05; // 允许5%误差
+        
+        // 渲染结果
+        let html = '';
+        
+        // 基本信息
+        html += `<div class="result">`;
+        html += `<h2>📊 用户基本信息</h2>`;
+        html += `<div class="result-item"><span class="result-label">钱包地址</span><span class="result-value">${userAddress.slice(0, 6)}...${userAddress.slice(-4)}</span></div>`;
+        html += `<div class="result-item"><span class="result-label">RAT余额</span><span class="result-value">${balance.toLocaleString()} RAT</span></div>`;
+        html += `<div class="result-item"><span class="result-label">VIP等级</span><span class="result-value">VIP ${currentTier}</span></div>`;
+        html += `<div class="result-item"><span class="result-label">日利率</span><span class="result-value">${dailyRate}%</span></div>`;
+        html += `<div class="result-item"><span class="result-label">已过时间</span><span class="result-value">${daysElapsed.toFixed(4)} 天</span></div>`;
+        html += `</div>`;
+        
+        // 收益对比
+        html += `<div class="result">`;
+        html += `<h2>💰 收益数据</h2>`;
+        html += `<div class="result-item"><span class="result-label">当前累计收益</span><span class="result-value">${pendingUsdt.toFixed(6)} USDT</span></div>`;
+        html += `<div class="result-item"><span class="result-label">预期累计收益</span><span class="result-value">${expectedEarnings.toFixed(6)} USDT</span></div>`;
+        html += `<div class="result-item"><span class="result-label">实际日收益</span><span class="result-value">${actualDailyEarnings.toFixed(2)} USDT/天</span></div>`;
+        html += `<div class="result-item"><span class="result-label">预期日收益</span><span class="result-value">${expectedDailyEarnings.toFixed(2)} USDT/天</span></div>`;
+        html += `<div class="result-item"><span class="result-label">误差率</span><span class="result-value">${(errorRate * 100).toFixed(2)}%</span></div>`;
+        html += `</div>`;
+        
+        // 修复前后对比
+        html += `<div class="result">`;
+        html += `<h2>📈 修复前后对比</h2>`;
+        html += `<div class="comparison">`;
+        html += `<div class="comparison-card error">`;
+        html += `<h3>修复前（错误）</h3>`;
+        html += `<div class="value">${earningsBefore.toFixed(6)}</div>`;
+        html += `<p style="font-size: 12px; color: #666; margin-top: 5px;">USDT</p>`;
+        html += `</div>`;
+        html += `<div class="comparison-card">`;
+        html += `<h3>修复后（当前）</h3>`;
+        html += `<div class="value">${pendingUsdt.toFixed(6)}</div>`;
+        html += `<p style="font-size: 12px; color: #666; margin-top: 5px;">USDT</p>`;
+        html += `</div>`;
+        html += `</div>`;
+        html += `<div class="result-item"><span class="result-label">收益增长</span><span class="result-value">${(pendingUsdt / earningsBefore).toFixed(2)}x</span></div>`;
+        html += `</div>`;
+        
+        // 验证结果
+        if (isFixed) {
+          html += `<div class="result status-success">`;
+          html += `<h2>✅ 验证结果：修复成功</h2>`;
+          html += `<p style="margin-top: 10px; color: #155724;">🎉 太好了！收益计算已恢复正常，VIP日利率修复生效！</p>`;
+          html += `<ul style="margin-top: 15px; padding-left: 20px; color: #155724;">`;
+          html += `<li>日利率显示正确：${dailyRate}%</li>`;
+          html += `<li>收益计算准确：误差率 ${(errorRate * 100).toFixed(2)}% < 5%</li>`;
+          html += `<li>收益增长：${(pendingUsdt / earningsBefore).toFixed(2)}倍</li>`;
+          html += `</ul>`;
+          html += `</div>`;
+        } else {
+          html += `<div class="result status-error">`;
+          html += `<h2>❌ 验证结果：修复失败</h2>`;
+          html += `<p style="margin-top: 10px; color: #721c24;">⚠️ 收益计算仍有问题，误差率 ${(errorRate * 100).toFixed(2)}% > 5%</p>`;
+          html += `<ul style="margin-top: 15px; padding-left: 20px; color: #721c24;">`;
+          html += `<li>请检查Render部署状态</li>`;
+          html += `<li>确认代码是否已推送到main分支</li>`;
+          html += `<li>查看部署日志是否有错误</li>`;
+          html += `<li>必要时手动触发重新部署</li>`;
+          html += `</ul>`;
+          html += `</div>`;
+        }
+        
+        // RAW数据
+        html += `<div class="result" style="margin-top: 20px;">`;
+        html += `<h2>🔧 原始API响应</h2>`;
+        html += `<pre style="background: white; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${JSON.stringify(data, null, 2)}</pre>`;
+        html += `</div>`;
+        
+        output.innerHTML = html;
+        
+      } catch (error) {
+        output.innerHTML = `
+          <div class="result status-error">
+            <h2>❌ 验证失败</h2>
+            <p style="margin-top: 10px; color: #721c24;">连接API时发生错误：</p>
+            <pre style="background: white; padding: 15px; border-radius: 8px; margin-top: 10px; color: #721c24; font-size: 12px;">${error.message}</pre>
+            <p style="margin-top: 15px; color: #721c24;"><strong>可能原因：</strong></p>
+            <ul style="padding-left: 20px; color: #721c24;">
+              <li>Render服务未启动或正在休眠</li>
+              <li>网络连接问题</li>
+              <li>API地址配置错误</li>
+              <li>用户地址不存在</li>
+            </ul>
+          </div>
+        `;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '重新验证';
+      }
+    }
+  </script>
+</body>
+</html>
+

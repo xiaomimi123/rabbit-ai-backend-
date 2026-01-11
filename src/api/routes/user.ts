@@ -1,15 +1,58 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { TeamRewardsQuerySchema, UserInfoQuerySchema } from '../schemas.js';
+import type { ethers } from 'ethers';
+import { TeamRewardsQuerySchema, UserInfoQuerySchema, AddressSchema } from '../schemas.js';
 import { getTeamRewards, getUserInfo, getClaimsHistory, getReferralHistory } from '../../services/user.js';
 import { getUserNotifications, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification } from '../../services/notifications.js';
 import { toErrorResponse } from '../errors.js';
 
-export function registerUserRoutes(app: FastifyInstance) {
+export function registerUserRoutes(app: FastifyInstance, deps?: { 
+  getProvider?: () => ethers.providers.Provider;
+}) {
   app.get('/api/user/info', async (req: FastifyRequest, reply: FastifyReply) => {
     const parsed = UserInfoQuerySchema.safeParse(req.query);
     if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
     const data = await getUserInfo(parsed.data.address);
     return data;
+  });
+
+  // 🆕 公开API: 获取用户实时收益（不需要管理员权限）
+  app.get('/api/user/earnings', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = UserInfoQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.status(400).send({ ok: false, code: 'INVALID_REQUEST', message: parsed.error.message });
+    
+    try {
+      const { calculateUserEarnings } = await import('../../services/earnings.js');
+      
+      // 如果没有提供 provider，使用默认的（这对于测试场景很有用）
+      if (!deps?.getProvider) {
+        return reply.status(503).send({ 
+          ok: false, 
+          code: 'SERVICE_UNAVAILABLE', 
+          message: 'Provider not configured' 
+        });
+      }
+      
+      const result = await calculateUserEarnings(deps.getProvider(), parsed.data.address);
+      
+      return {
+        ok: true,
+        address: parsed.data.address.toLowerCase(),
+        balance: parseFloat(result.balance),
+        pendingUsdt: result.pendingUsdt,
+        dailyRate: result.dailyRate,
+        currentTier: result.currentTier,
+        daysElapsed: result.holdingDays,
+        lastSettlementTime: new Date().toISOString(), // 简化版
+      };
+    } catch (e) {
+      console.error(`[User] Failed to calculate earnings for ${parsed.data.address}:`, e);
+      const err = toErrorResponse(e);
+      return reply.status(500).send({
+        ok: false,
+        code: 'CALCULATION_ERROR',
+        message: err.message
+      });
+    }
   });
 
   app.get('/api/user/team-rewards', async (req: FastifyRequest, reply: FastifyReply) => {

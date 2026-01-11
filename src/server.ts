@@ -141,7 +141,7 @@ export async function createServer(deps: {
   }
 
   registerHealthRoutes(app);
-  registerUserRoutes(app);
+  registerUserRoutes(app, { getProvider: deps.getProvider });
   registerAssetRoutes(app, deps);
   registerMiningRoutes(app, deps);
   registerAdminRoutes(app, { 
