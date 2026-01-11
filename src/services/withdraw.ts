@@ -5,6 +5,7 @@ import { ERC20_ABI } from '../infra/abis.js';
 import { config } from '../config.js';
 import { getVipTierByBalance } from './vipConfig.js';
 import { getEnergyConfigValueCached, EnergyConfigKeys } from './energyConfig.js'; // 🟢 新增：动态能量配置
+import { RAT_TOKEN_PRICE } from '../constants/tokenConfig.js';
 
 export async function applyWithdraw(
   address: string, 
@@ -125,7 +126,7 @@ export async function applyWithdraw(
   // 如果余额 < 10,000，增量收益必须为 0（即使有历史脏数据）
   const MIN_BALANCE_FOR_EARNINGS = 10000;
   
-  const TOKEN_PRICE = 0.01; // $0.01 per RAT
+  const TOKEN_PRICE = RAT_TOKEN_PRICE; // 🔒 使用固定配置：0.01 USDT per RAT
   let incrementalEarnings = 0;
   
   // 🔒 P0级修复：只有余额 >= 10,000 RAT 才能计算增量收益

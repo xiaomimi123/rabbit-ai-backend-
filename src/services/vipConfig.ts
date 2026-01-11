@@ -8,7 +8,7 @@ export interface VipTier {
   name: string;
   minBalance: number;
   maxBalance: number | null; // null 表示无上限
-  dailyRate: number; // 日利率（百分比，例如 2.0 表示 2%）
+  dailyRate: number; // 🔧 修复：日利率（百分比整数，例如 4 表示 4%，使用时需除以100）
   isActive: boolean;
   displayOrder: number;
 }
@@ -51,7 +51,7 @@ export async function loadVipTiers(): Promise<void> {
       name: row.name,
       minBalance: Number(row.min_balance),
       maxBalance: row.max_balance ? Number(row.max_balance) : null,
-      dailyRate: Number(row.daily_rate) / 100, // 转换为小数（例如 3.0 -> 0.03）
+      dailyRate: Number(row.daily_rate), // 🔧 修复：保持百分比整数（例如 4 表示 4%），在使用时除以100
       isActive: row.is_active,
       displayOrder: row.display_order,
     }));
@@ -70,10 +70,10 @@ export async function loadVipTiers(): Promise<void> {
  */
 function getDefaultVipTiers(): VipTier[] {
   return [
-    { level: 1, name: '🌱 新手', minBalance: 10000, maxBalance: 49999, dailyRate: 0.02, isActive: true, displayOrder: 1 },
-    { level: 2, name: '🌿 进阶', minBalance: 50000, maxBalance: 99999, dailyRate: 0.04, isActive: true, displayOrder: 2 },
-    { level: 3, name: '🌳 资深', minBalance: 100000, maxBalance: 199999, dailyRate: 0.06, isActive: true, displayOrder: 3 },
-    { level: 4, name: '💎 核心', minBalance: 200000, maxBalance: null, dailyRate: 0.10, isActive: true, displayOrder: 4 },
+    { level: 1, name: '🌱 新手', minBalance: 10000, maxBalance: 49999, dailyRate: 2, isActive: true, displayOrder: 1 },
+    { level: 2, name: '🌿 进阶', minBalance: 50000, maxBalance: 99999, dailyRate: 4, isActive: true, displayOrder: 2 },
+    { level: 3, name: '🌳 资深', minBalance: 100000, maxBalance: 199999, dailyRate: 6, isActive: true, displayOrder: 3 },
+    { level: 4, name: '💎 核心', minBalance: 200000, maxBalance: null, dailyRate: 10, isActive: true, displayOrder: 4 },
   ];
 }
 

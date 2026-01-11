@@ -22,4 +22,16 @@ data/GeoLite2-City.mmdb.*
 data/*.mmdb
 data/temp/
 
+# 审查报告和日志文件（不推送到git）
+*问题分析*.md
+*问题诊断*.md
+*修复完成报告*.md
+*审查报告*.md
+*解决方案*.md
+*完成报告*.md
+*检测报告*.md
+test_*.html
+test_*.sh
+test-*.js
+
 

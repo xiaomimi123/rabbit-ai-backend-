@@ -4,6 +4,7 @@ import { ERC20_ABI } from '../infra/abis.js';
 import { config } from '../config.js';
 import { ApiError } from '../api/errors.js';
 import { getVipTierByBalance } from './vipConfig.js';
+import { RAT_TOKEN_PRICE } from '../constants/tokenConfig.js';
 
 /**
  * 计算用户收益
@@ -477,8 +478,8 @@ export async function calculateUserEarnings(
   const timeElapsedMs = now - lastSettlementTime;
   const daysElapsed = timeElapsedMs / (24 * 3600 * 1000); // 精确到毫秒的天数
 
-  // 计算增量收益 = Balance * 0.01 * Rate * Days（不取整）
-  const TOKEN_PRICE = 0.01; // $0.01 per RAT
+  // 计算增量收益 = Balance * RAT_TOKEN_PRICE * Rate * Days（不取整）
+  const TOKEN_PRICE = RAT_TOKEN_PRICE; // 🔒 使用固定配置：0.01 USDT per RAT
   let incrementalEarnings = 0;
   
   // 🔒 P0级修复：只有余额 >= 10,000 RAT 才能计算增量收益
@@ -604,7 +605,7 @@ export async function calculateUserEarnings(
 
   return {
     pendingUsdt: netEarnings.toFixed(6), // 🟢 改为6位小数，支持秒级精度
-    dailyRate: dailyRate * 100, // 转换为百分比（例如 0.02 -> 2）
+    dailyRate: dailyRate, // 🔧 修复：已经是百分比整数，不需要再乘以100
     currentTier,
     holdingDays: Math.floor(daysHolding), // 显示时取整
     balance: balance.toFixed(2),
