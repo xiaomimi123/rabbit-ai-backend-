@@ -9,6 +9,64 @@ import { config } from '../config.js';
 // 全局 Bot 实例
 let bot: TelegramBot | null = null;
 
+// 🟢 新增：消息队列管理器
+class TelegramMessageQueue {
+  private queue: Array<() => Promise<void>> = [];
+  private processing = false;
+  private readonly DELAY_MS = 1000; // 每条消息间隔 1 秒（避免 Telegram API 限流）
+  private readonly MAX_RETRIES = 3; // 最大重试次数
+
+  async add(task: () => Promise<void>, priority: 'high' | 'normal' = 'normal') {
+    if (priority === 'high') {
+      // 高优先级消息插入队列前面
+      this.queue.unshift(task);
+    } else {
+      this.queue.push(task);
+    }
+    
+    if (!this.processing) {
+      await this.process();
+    }
+  }
+
+  private async process() {
+    this.processing = true;
+    while (this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (task) {
+        await this.executeWithRetry(task);
+        // 等待间隔，避免触发 Telegram API 限流
+        if (this.queue.length > 0) {
+          await new Promise(resolve => setTimeout(resolve, this.DELAY_MS));
+        }
+      }
+    }
+    this.processing = false;
+  }
+
+  private async executeWithRetry(task: () => Promise<void>, retries = 0): Promise<void> {
+    try {
+      await task();
+    } catch (error: any) {
+      if (retries < this.MAX_RETRIES) {
+        const delay = Math.pow(2, retries) * 1000; // 指数退避：1s, 2s, 4s
+        console.warn(`[TelegramQueue] 发送失败，${delay}ms 后重试 (${retries + 1}/${this.MAX_RETRIES})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        await this.executeWithRetry(task, retries + 1);
+      } else {
+        console.error('[TelegramQueue] 达到最大重试次数，放弃发送:', error);
+      }
+    }
+  }
+
+  getQueueSize(): number {
+    return this.queue.length;
+  }
+}
+
+// 全局消息队列实例
+const messageQueue = new TelegramMessageQueue();
+
 /**
  * 初始化 Telegram Bot
  * 在服务启动时调用一次
@@ -61,15 +119,18 @@ export async function sendWithdrawalPendingNotification(data: {
     return;
   }
 
-  try {
-    const isLarge = data.isLargeWithdrawal || false;
-    const title = isLarge ? '🚨 <b>大额提现告警</b>' : '🔔 <b>新提现申请</b>';
-    const amountDisplay = isLarge ? `<b>${data.amount} USDT</b> ⚠️` : `<b>${data.amount} USDT</b>`;
-    
-    let userProfileSection = '';
-    if (isLarge && data.userStats) {
-      const stats = data.userStats;
-      userProfileSection = `
+  // 🟢 使用消息队列发送，大额提现使用高优先级
+  const priority = data.isLargeWithdrawal ? 'high' : 'normal';
+  await messageQueue.add(async () => {
+    try {
+      const isLarge = data.isLargeWithdrawal || false;
+      const title = isLarge ? '🚨 <b>大额提现告警</b>' : '🔔 <b>新提现申请</b>';
+      const amountDisplay = isLarge ? `<b>${data.amount} USDT</b> ⚠️` : `<b>${data.amount} USDT</b>`;
+      
+      let userProfileSection = '';
+      if (isLarge && data.userStats) {
+        const stats = data.userStats;
+        userProfileSection = `
 
 📊 <b>用户画像</b>
 💰 持仓: ${stats.ratBalance.toFixed(2)} RAT
@@ -77,14 +138,19 @@ export async function sendWithdrawalPendingNotification(data: {
 📈 收益: $${stats.totalEarnings.toFixed(2)} USDT
 👑 等级: VIP ${stats.vipLevel}
 `;
-    }
-    
-    const message = `
+      }
+      
+      // 🟢 新增：显示用户能量值（所有提现都显示）
+      const energyDisplay = data.userStats 
+        ? `⚡ 消耗能量: <b>${data.energyCost}</b> (剩余: ${data.userStats.energyAvailable})`
+        : `⚡ 消耗能量: <b>${data.energyCost}</b>`;
+      
+      const message = `
 ${title}
 
 👤 用户地址: <code>${data.address}</code>
 💰 提现金额: ${amountDisplay}
-⚡ 消耗能量: <b>${data.energyCost}</b>
+${energyDisplay}
 🆔 提现ID: <code>${data.withdrawalId}</code>
 🕒 申请时间: ${new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}${userProfileSection}
 
@@ -93,17 +159,19 @@ ${isLarge ? '⚠️ 金额超过自动放款阈值，需要手动审核' : ''}
 
 请登录后台管理系统进行审核 👇
 https://bnsi55.net/
-    `.trim();
+      `.trim();
 
-    await bot.sendMessage(config.telegram.adminChatId, message, {
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    });
+      await bot!.sendMessage(config.telegram.adminChatId, message, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
 
-    console.log(`[Telegram] ✅ 提现申请通知已发送: ${data.withdrawalId}${isLarge ? ' (大额告警)' : ''}`);
-  } catch (error) {
-    console.error('[Telegram] ❌ 发送提现申请通知失败:', error);
-  }
+      console.log(`[Telegram] ✅ 提现申请通知已发送: ${data.withdrawalId}${isLarge ? ' (大额告警)' : ''}`);
+    } catch (error) {
+      console.error('[Telegram] ❌ 发送提现申请通知失败:', error);
+      throw error; // 抛出错误以触发重试
+    }
+  }, priority);
 }
 
 /**
@@ -377,6 +445,7 @@ export async function sendTestMessage(): Promise<{ ok: boolean; message?: string
 • Bot Token: ${config.telegram.botToken ? '✅ 已配置' : '❌ 未配置'}
 • Admin Chat ID: ${config.telegram.adminChatId ? '✅ 已配置' : '❌ 未配置'}
 • 通知状态: ${config.telegram.enabled ? '✅ 已启用' : '❌ 已禁用'}
+• 消息队列: ${messageQueue.getQueueSize()} 条待发送
 
 🎉 测试成功！您将收到提现申请的实时通知。
     `.trim();
@@ -396,5 +465,148 @@ export async function sendTestMessage(): Promise<{ ok: boolean; message?: string
       error: error?.message || '未知错误',
     };
   }
+}
+
+// ==================== 🟢 新增功能 ====================
+
+/**
+ * 发送系统异常告警
+ * @param data 异常信息
+ */
+export async function sendSystemErrorAlert(data: {
+  type: 'RPC_FAILURE' | 'DATABASE_ERROR' | 'CRITICAL_ERROR';
+  message: string;
+  details?: string;
+  timestamp: string;
+}): Promise<void> {
+  if (!bot || !config.telegram.enabled) {
+    console.log('[Telegram] 跳过通知发送（Bot 未初始化或功能已禁用）');
+    return;
+  }
+
+  // 系统告警使用高优先级
+  await messageQueue.add(async () => {
+    try {
+      const typeEmoji = {
+        RPC_FAILURE: '🔌',
+        DATABASE_ERROR: '💾',
+        CRITICAL_ERROR: '🔥',
+      };
+
+      const typeName = {
+        RPC_FAILURE: 'RPC 连接故障',
+        DATABASE_ERROR: '数据库连接错误',
+        CRITICAL_ERROR: '严重系统错误',
+      };
+
+      const message = `
+🚨 <b>系统异常告警</b>
+
+${typeEmoji[data.type]} <b>${typeName[data.type]}</b>
+
+⚠️ 错误信息: ${data.message}
+${data.details ? `📝 详细信息: ${data.details}` : ''}
+🕒 发生时间: ${new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
+
+⚠️ <b>请立即检查系统状态</b>
+      `.trim();
+
+      await bot!.sendMessage(config.telegram.adminChatId, message, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+
+      console.log(`[Telegram] ✅ 系统异常告警已发送: ${data.type}`);
+    } catch (error) {
+      console.error('[Telegram] ❌ 发送系统异常告警失败:', error);
+      throw error;
+    }
+  }, 'high');
+}
+
+/**
+ * 发送用户注册通知
+ * @param data 用户注册信息
+ */
+export async function sendUserRegistrationNotification(data: {
+  address: string;
+  referrer: string | null;
+  timestamp: string;
+}): Promise<void> {
+  if (!bot || !config.telegram.enabled) {
+    console.log('[Telegram] 跳过通知发送（Bot 未初始化或功能已禁用）');
+    return;
+  }
+
+  await messageQueue.add(async () => {
+    try {
+      const referrerInfo = data.referrer 
+        ? `👥 推荐人: <code>${data.referrer}</code>`
+        : '👥 推荐人: 无（直接注册）';
+
+      const message = `
+👤 <b>新用户注册</b>
+
+🎉 用户地址: <code>${data.address}</code>
+${referrerInfo}
+🕒 注册时间: ${new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
+
+📊 当前用户总数: 查看后台管理系统
+      `.trim();
+
+      await bot!.sendMessage(config.telegram.adminChatId, message, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+
+      console.log(`[Telegram] ✅ 用户注册通知已发送: ${data.address}`);
+    } catch (error) {
+      console.error('[Telegram] ❌ 发送用户注册通知失败:', error);
+      throw error;
+    }
+  }, 'normal');
+}
+
+/**
+ * 发送大额持仓通知
+ * @param data 持仓信息
+ */
+export async function sendLargeHoldingAlert(data: {
+  address: string;
+  ratBalance: number;
+  threshold: number;
+  vipLevel: number;
+  timestamp: string;
+}): Promise<void> {
+  if (!bot || !config.telegram.enabled) {
+    console.log('[Telegram] 跳过通知发送（Bot 未初始化或功能已禁用）');
+    return;
+  }
+
+  await messageQueue.add(async () => {
+    try {
+      const message = `
+💎 <b>大额持仓告警</b>
+
+👤 用户地址: <code>${data.address}</code>
+💰 持仓数量: <b>${data.ratBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })} RAT</b>
+📊 告警阈值: ${data.threshold.toLocaleString()} RAT
+👑 VIP 等级: VIP ${data.vipLevel}
+🕒 检测时间: ${new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
+
+⚠️ 该用户持仓超过设定阈值，请关注
+      `.trim();
+
+      await bot!.sendMessage(config.telegram.adminChatId, message, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+
+      console.log(`[Telegram] ✅ 大额持仓告警已发送: ${data.address}`);
+    } catch (error) {
+      console.error('[Telegram] ❌ 发送大额持仓告警失败:', error);
+      throw error;
+    }
+  }, 'normal');
 }
 
