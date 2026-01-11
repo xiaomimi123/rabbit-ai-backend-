@@ -119,6 +119,17 @@ async function main() {
   
   const getAutoPayoutService = () => autoPayoutService;
 
+  // 🔥 新增：初始化补偿扫描服务（P0级优化）
+  console.log('[startup] 🚀 正在初始化补偿扫描服务...');
+  try {
+    const { initializeCompensationScanner } = await import('./services/compensationScanner.js');
+    initializeCompensationScanner(getProvider());
+    console.log('[startup] ✅ 补偿扫描服务已启动（每 10 分钟自动检查缺失数据）');
+  } catch (e) {
+    console.warn('[startup] ⚠️  补偿扫描服务初始化失败，但不影响主服务:', e);
+    // 补偿扫描失败不影响主服务
+  }
+
   const app = await createServer({ getProvider, getAdminProvider, getAutoPayoutService });
 
   // start HTTP
