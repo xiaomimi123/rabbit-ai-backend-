@@ -95,6 +95,7 @@ export class AutoPayoutService {
       const { data, error } = await supabase
         .from('auto_payout_config')
         .select('*')
+        .order('id', { ascending: false })  // ✅ 按 id 降序，获取最新记录
         .limit(1)
         .maybeSingle();
 
@@ -143,10 +144,11 @@ export class AutoPayoutService {
    * 配置自动放款
    */
   async configure(params: AutoPayoutConfig, updatedBy?: string): Promise<void> {
-    // 1. 检查是否已有配置
+    // 1. 检查是否已有配置（✅ 添加排序，获取最新记录）
     const { data: existing } = await supabase
       .from('auto_payout_config')
       .select('*')
+      .order('id', { ascending: false })  // ✅ 按 id 降序
       .limit(1)
       .maybeSingle();
 
@@ -169,28 +171,45 @@ export class AutoPayoutService {
       throw new Error('首次配置必须提供私钥');
     }
 
-    // 3. 保存配置到数据库
-    const { error } = await supabase
-      .from('auto_payout_config')
-      .upsert({
-        private_key_encrypted: encryptedKey,
-        wallet_address: address,
-        threshold_usdt: params.threshold,
-        enabled: params.enabled,
-        min_balance_usdt: params.minBalance || 100.0,
-        daily_limit_usdt: params.dailyLimit || null,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy || null,
-      }, {
-        onConflict: 'id', // 假设 id 是主键，如果不存在则插入
-      });
+    // 3. 准备配置数据
+    const configData = {
+      private_key_encrypted: encryptedKey,
+      wallet_address: address,
+      threshold_usdt: params.threshold,
+      enabled: params.enabled,
+      min_balance_usdt: params.minBalance || 100.0,
+      daily_limit_usdt: params.dailyLimit || null,
+      updated_at: new Date().toISOString(),
+      updated_by: updatedBy || null,
+    };
+
+    // 4. 保存配置到数据库（✅ 修复 upsert 逻辑）
+    let error: any;
+    if (existing) {
+      // ✅ 更新现有记录
+      const result = await supabase
+        .from('auto_payout_config')
+        .update(configData)
+        .eq('id', existing.id);
+      error = result.error;
+      
+      console.log(`[AutoPayout] 📝 更新配置 (id=${existing.id}): 最小余额=${params.minBalance || 100.0} USDT`);
+    } else {
+      // ✅ 创建新记录
+      const result = await supabase
+        .from('auto_payout_config')
+        .insert(configData);
+      error = result.error;
+      
+      console.log('[AutoPayout] ✨ 创建新配置');
+    }
 
     if (error) {
       console.error('[AutoPayout] 保存配置失败:', error);
       throw new Error(`Failed to save config: ${error.message}`);
     }
 
-    // 4. 更新内存状态
+    // 5. 更新内存状态
     this.wallet = wallet.connect(this.provider);
     this.walletAddress = address;
     this.threshold = params.threshold;
@@ -198,12 +217,12 @@ export class AutoPayoutService {
     this.minBalance = params.minBalance || 100.0;
     this.dailyLimit = params.dailyLimit || null;
 
-    // 5. 初始化 USDT 合约
+    // 6. 初始化 USDT 合约
     if (config.usdtContract) {
       this.usdtContract = new ethers.Contract(config.usdtContract, ERC20_ABI, this.provider);
     }
 
-    console.log(`[AutoPayout] ✅ 配置已更新: 钱包地址=${address}, 阈值=${params.threshold} USDT, 启用=${params.enabled}`);
+    console.log(`[AutoPayout] ✅ 配置已更新: 钱包地址=${address}, 阈值=${params.threshold} USDT, 启用=${params.enabled}, 最小余额=${params.minBalance || 100.0} USDT`);
   }
 
   /**
@@ -220,6 +239,7 @@ export class AutoPayoutService {
     const { data } = await supabase
       .from('auto_payout_config')
       .select('*')
+      .order('id', { ascending: false })  // ✅ 按 id 降序，获取最新记录
       .limit(1)
       .maybeSingle();
 
