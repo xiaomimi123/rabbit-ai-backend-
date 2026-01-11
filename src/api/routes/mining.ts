@@ -3,7 +3,7 @@ import { VerifyClaimBodySchema } from '../schemas.js';
 import { toErrorResponse } from '../errors.js';
 import { verifyClaim } from '../../services/verifyClaim.js';
 import type { ethers } from 'ethers';
-import { Reader } from '@maxmind/geoip2-node'; // 🟢 新增：GeoIP2
+import maxmind, { CityResponse } from 'maxmind'; // 🟢 使用已安装的 maxmind 包
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -38,8 +38,12 @@ async function getCountryFromIp(ip: string): Promise<string | undefined> {
     }
     
     const dbPath = path.join(__dirname, '../../../data/GeoLite2-City.mmdb');
-    const reader = await Reader.open(dbPath);
-    const response = reader.city(ip);
+    const lookup = await maxmind.open<CityResponse>(dbPath);
+    const response = lookup.get(ip);
+    
+    if (!response) {
+      return undefined;
+    }
     
     // 优先使用中文名称，否则使用英文名称
     const country = response.country?.names?.['zh-CN'] || response.country?.names?.en;
