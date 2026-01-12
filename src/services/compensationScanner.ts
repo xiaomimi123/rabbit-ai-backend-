@@ -110,12 +110,41 @@ export class CompensationScanner {
 
         try {
           // 查询链上是否有 Claimed 事件
+          // ⚠️ RPC节点限制：单次查询最多50000个区块
+          // BSC约3秒一个区块，7天 = 201,600个区块
+          // 我们查询最近30天(约300,000个区块)，分3次查询
+          const currentBlock = await this.provider.getBlockNumber();
+          const blocksToScan = 300000; // 约30天
+          const fromBlock = Math.max(0, currentBlock - blocksToScan);
+          
           const filter = this.contract.filters.Claimed(user.address);
-          const events = await this.contract.queryFilter(filter);
+          
+          // 分批查询，每次50000个区块
+          let events: any[] = [];
+          const batchSize = 50000;
+          
+          for (let start = fromBlock; start <= currentBlock; start += batchSize) {
+            const end = Math.min(start + batchSize - 1, currentBlock);
+            try {
+              const batchEvents = await this.contract.queryFilter(filter, start, end);
+              events = events.concat(batchEvents);
+              
+              // 避免RPC限流，每次查询后等待1秒
+              if (end < currentBlock) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+              }
+            } catch (batchError: any) {
+              console.error(
+                `[CompensationScanner] ⚠️ 查询用户 ${user.address} 区块范围 ${start}-${end} 失败:`,
+                batchError?.message
+              );
+              // 继续查询下一批
+            }
+          }
 
           if (events.length === 0) {
             console.log(
-              `[CompensationScanner] ℹ️ 用户 ${user.address} 链上没有领取记录（可能是外部转账）`
+              `[CompensationScanner] ℹ️ 用户 ${user.address} 链上没有领取记录（可能是外部转账或超过30天）`
             );
             skippedCount++;
             continue;
