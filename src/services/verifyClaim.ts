@@ -401,10 +401,12 @@ export async function verifyClaim(params: {
   }
 
   // Ensure user row exists so Admin Panel "用户总数" can increase after first claim.
-  const isNewUser = await ensureUserRow(address, validReferrer);
+  await ensureUserRow(address, validReferrer);
   
-  // 🟢 新增：如果是新用户（第一次领取空投），发送 Telegram 注册通知
-  if (isNewUser) {
+  // 🟢 修复：使用 rpcResult.is_first_claim 判断是否是新用户，而不是 isNewUser
+  // 原因：Indexer 可能已经提前创建了用户记录，导致 isNewUser=false，但用户仍然是第一次领取
+  const isFirstClaim = rpcResult?.is_first_claim === true;
+  if (isFirstClaim) {
     try {
       const { sendUserRegistrationNotification } = await import('./telegram.js');
       await sendUserRegistrationNotification({
