@@ -74,10 +74,17 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
   const finalUsersCount = usersCount ?? 0;
   console.log(`[getAdminKpis] Total users: ${finalUsersCount}`);
 
-  // pending withdraw total
-  const { data: pend, error: pendErr } = await supabase.from('withdrawals').select('amount').eq('status', 'Pending');
-  if (pendErr) throw pendErr;
-  const pendingTotal = (pend || []).reduce((acc: number, r: any) => acc + Number(r.amount || 0), 0);
+  // 🟢 新增：查询总累计支出（已完成的提现总金额）
+  const { data: completedWithdrawals, error: withdrawErr } = await supabase
+    .from('withdrawals')
+    .select('amount')
+    .eq('status', 'Completed');
+  
+  if (withdrawErr) {
+    console.error('[getAdminKpis] Failed to query completed withdrawals:', withdrawErr);
+  }
+  const totalExpenses = (completedWithdrawals || []).reduce((acc: number, r: any) => acc + Number(r.amount || 0), 0);
+  console.log(`[getAdminKpis] Total expenses (completed withdrawals): ${totalExpenses.toFixed(2)} USDT`);
 
   // 🟢 新增：查询过去24小时的空投领取次数
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -260,8 +267,8 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
     ok: true,
     usersTotal: Number(finalUsersCount),
     claims24h: finalClaims24h, // 🟢 新增：24小时领取次数
-    pendingWithdrawTotal: String(pendingTotal),
-    pendingWithdrawUnit: 'USDT',
+    totalExpenses: totalExpenses, // 🟢 新增：总累计支出（替换待处理提现）
+    totalExpensesUnit: 'USDT',
     airdropFeeRecipient: feeRecipient || '',
     airdropFeeBalance: totalRevenueBNB.toFixed(6), // ✅ 修复：显示累计总收益，而不是当前余额
     airdropFeeUnit: 'BNB',
@@ -345,6 +352,69 @@ async function getDailyClaimsStatsFallback(days: number) {
     .sort((a, b) => a.date.localeCompare(b.date));
   
   console.log(`[getDailyClaimsStatsFallback] 成功统计 ${stats.length} 天的数据`);
+  return { ok: true, stats };
+}
+
+// 🟢 新增：获取每日用户增长统计（最近N天）
+export async function getDailyUserGrowthStats(days: number = 7) {
+  try {
+    console.log(`[getDailyUserGrowthStats] 查询最近 ${days} 天的用户增长统计...`);
+    
+    // 查询最近N天的每日新增用户数
+    const { data, error } = await supabase
+      .rpc('get_daily_user_growth_stats', { days_count: days });
+    
+    if (error) {
+      console.error('[getDailyUserGrowthStats] 数据库查询失败:', error);
+      // 如果RPC函数不存在，使用降级方案
+      return await getDailyUserGrowthStatsFallback(days);
+    }
+    
+    console.log(`[getDailyUserGrowthStats] 成功获取 ${data?.length || 0} 天的数据`);
+    return {
+      ok: true,
+      stats: data || [],
+    };
+  } catch (e) {
+    console.error('[getDailyUserGrowthStats] 发生错误:', e);
+    // 发生错误时使用降级方案
+    return await getDailyUserGrowthStatsFallback(days);
+  }
+}
+
+// 降级方案：直接查询users表
+async function getDailyUserGrowthStatsFallback(days: number) {
+  console.log('[getDailyUserGrowthStatsFallback] 使用降级方案查询...');
+  
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+  startDate.setHours(0, 0, 0, 0);
+  
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('created_at')
+    .gte('created_at', startDate.toISOString());
+  
+  if (error) {
+    console.error('[getDailyUserGrowthStatsFallback] 查询失败:', error);
+    return { ok: true, stats: [] };
+  }
+  
+  // 按日期分组统计
+  const statsMap = new Map<string, number>();
+  
+  users?.forEach((user) => {
+    const date = new Date(user.created_at);
+    const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
+    statsMap.set(dateKey, (statsMap.get(dateKey) || 0) + 1);
+  });
+  
+  // 转换为数组格式
+  const stats = Array.from(statsMap.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  
+  console.log(`[getDailyUserGrowthStatsFallback] 成功统计 ${stats.length} 天的数据`);
   return { ok: true, stats };
 }
 

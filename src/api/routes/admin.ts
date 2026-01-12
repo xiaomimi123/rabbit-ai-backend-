@@ -38,6 +38,7 @@ import {
   completeWithdrawal,
   getAdminKpis,
   getDailyClaimsStats, // 🟢 新增：每日领取次数统计
+  getDailyUserGrowthStats, // 🟢 新增：每日用户增长统计
   getUsdtInfo,
   listPendingWithdrawals,
   rejectWithdrawal,
@@ -130,6 +131,18 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
     try {
       const days = Number(req.query?.days || 7); // 默认最近7天
       return await getDailyClaimsStats(days);
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // 🟢 新增：GET /api/admin/users/daily-growth - 获取每日用户增长统计
+  app.get('/api/admin/users/daily-growth', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const days = Number(req.query?.days || 7); // 默认最近7天
+      return await getDailyUserGrowthStats(days);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
