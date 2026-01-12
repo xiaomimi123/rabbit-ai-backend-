@@ -75,16 +75,23 @@ export class CompensationScanner {
     try {
       console.log('[CompensationScanner] 🔍 开始扫描缺失的领取记录...');
 
-      // 查询所有 energy_total = 0 且 RAT 余额 > 100 的用户（最近1天创建的）
-      // ⚠️ 只扫描最近1天，避免消耗过多RPC资源（RPC配额：Growth 5亿CUs，700 CUPS）
+      // 查询所有 energy_total = 0 且 RAT 余额 > 100 的用户
+      // ⚠️ 优化查询条件，避免重复扫描同一批用户：
+      // 1. 只扫描最近1天创建的用户
+      // 2. 只扫描最近10分钟内有更新的用户（说明刚刚领取了空投）
+      // 3. 限制最多20个用户，降低RPC消耗
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const oneDayAgo = new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString();
+      
       const { data: users, error } = await supabase
         .from('users')
-        .select('address, created_at, rat_balance_wei, energy_total')
+        .select('address, created_at, rat_balance_wei, energy_total, updated_at')
         .eq('energy_total', 0)
         .gte('rat_balance_wei', '100000000000000000000') // >= 100 RAT（过滤小额用户）
-        .gte('created_at', new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString()) // 🔥 改为1天
+        .gte('created_at', oneDayAgo) // 最近1天创建
+        .gte('updated_at', tenMinutesAgo) // 🔥 关键优化：只扫描最近10分钟有更新的用户
         .order('created_at', { ascending: false })
-        .limit(20); // 🔥 限制最多20个用户，降低RPC消耗
+        .limit(20); // 限制最多20个用户
 
       if (error) {
         throw error;
