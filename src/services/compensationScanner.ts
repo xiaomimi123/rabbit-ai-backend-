@@ -75,13 +75,16 @@ export class CompensationScanner {
     try {
       console.log('[CompensationScanner] 🔍 开始扫描缺失的领取记录...');
 
-      // 查询所有 energy_total = 0 且 RAT 余额 > 0 的用户（最近7天创建的）
+      // 查询所有 energy_total = 0 且 RAT 余额 > 100 的用户（最近1天创建的）
+      // ⚠️ 只扫描最近1天，避免消耗过多RPC资源（RPC配额：Growth 5亿CUs，700 CUPS）
       const { data: users, error } = await supabase
         .from('users')
         .select('address, created_at, rat_balance_wei, energy_total')
         .eq('energy_total', 0)
-        .gte('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString())
-        .order('created_at', { ascending: false });
+        .gte('rat_balance_wei', '100000000000000000000') // >= 100 RAT（过滤小额用户）
+        .gte('created_at', new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString()) // 🔥 改为1天
+        .order('created_at', { ascending: false })
+        .limit(20); // 🔥 限制最多20个用户，降低RPC消耗
 
       if (error) {
         throw error;
@@ -111,10 +114,11 @@ export class CompensationScanner {
         try {
           // 查询链上是否有 Claimed 事件
           // ⚠️ RPC节点限制：单次查询最多50000个区块
-          // BSC约3秒一个区块，7天 = 201,600个区块
-          // 我们查询最近30天(约300,000个区块)，分3次查询
+          // BSC约3秒一个区块，1天 = 28,800个区块
+          // 🔥 优化：只查询最近3天(约86,400个区块)，分2次查询
+          // 降低RPC消耗，适配 Growth 计划（5亿CUs，700 CUPS）
           const currentBlock = await this.provider.getBlockNumber();
-          const blocksToScan = 300000; // 约30天
+          const blocksToScan = 86400; // 约3天（降低RPC消耗）
           const fromBlock = Math.max(0, currentBlock - blocksToScan);
           
           const filter = this.contract.filters.Claimed(user.address);
