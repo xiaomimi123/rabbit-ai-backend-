@@ -285,6 +285,69 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
   return result;
 }
 
+// 🟢 新增：获取每日领取次数统计（最近7天）
+export async function getDailyClaimsStats(days: number = 7) {
+  try {
+    console.log(`[getDailyClaimsStats] 查询最近 ${days} 天的领取次数统计...`);
+    
+    // 查询最近N天的每日领取次数
+    const { data, error } = await supabase
+      .rpc('get_daily_claims_stats', { days_count: days });
+    
+    if (error) {
+      console.error('[getDailyClaimsStats] 数据库查询失败:', error);
+      // 如果RPC函数不存在，使用降级方案
+      return await getDailyClaimsStatsFallback(days);
+    }
+    
+    console.log(`[getDailyClaimsStats] 成功获取 ${data?.length || 0} 天的数据`);
+    return {
+      ok: true,
+      stats: data || [],
+    };
+  } catch (e) {
+    console.error('[getDailyClaimsStats] 发生错误:', e);
+    // 发生错误时使用降级方案
+    return await getDailyClaimsStatsFallback(days);
+  }
+}
+
+// 降级方案：直接查询claims表
+async function getDailyClaimsStatsFallback(days: number) {
+  console.log('[getDailyClaimsStatsFallback] 使用降级方案查询...');
+  
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+  startDate.setHours(0, 0, 0, 0);
+  
+  const { data: claims, error } = await supabase
+    .from('claims')
+    .select('created_at')
+    .gte('created_at', startDate.toISOString());
+  
+  if (error) {
+    console.error('[getDailyClaimsStatsFallback] 查询失败:', error);
+    return { ok: true, stats: [] };
+  }
+  
+  // 按日期分组统计
+  const statsMap = new Map<string, number>();
+  
+  claims?.forEach((claim) => {
+    const date = new Date(claim.created_at);
+    const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
+    statsMap.set(dateKey, (statsMap.get(dateKey) || 0) + 1);
+  });
+  
+  // 转换为数组格式
+  const stats = Array.from(statsMap.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  
+  console.log(`[getDailyClaimsStatsFallback] 成功统计 ${stats.length} 天的数据`);
+  return { ok: true, stats };
+}
+
 export async function listPendingWithdrawals(limit: number) {
   const { data, error } = await supabase
     .from('withdrawals')

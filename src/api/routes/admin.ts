@@ -37,6 +37,7 @@ import {
   adminSetSystemConfig,
   completeWithdrawal,
   getAdminKpis,
+  getDailyClaimsStats, // 🟢 新增：每日领取次数统计
   getUsdtInfo,
   listPendingWithdrawals,
   rejectWithdrawal,
@@ -117,6 +118,18 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
     try {
       // 🟢 使用专用的 Admin RPC Provider 查询 RAT 持仓
       return await getAdminKpis(deps.getAdminProvider());
+    } catch (e) {
+      const err = toErrorResponse(e);
+      return reply.status(400).send(err);
+    }
+  });
+
+  // 🟢 新增：GET /api/admin/claims/daily-stats - 获取每日领取次数统计
+  app.get('/api/admin/claims/daily-stats', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!assertAdmin(req, reply)) return;
+    try {
+      const days = Number(req.query?.days || 7); // 默认最近7天
+      return await getDailyClaimsStats(days);
     } catch (e) {
       const err = toErrorResponse(e);
       return reply.status(400).send(err);
