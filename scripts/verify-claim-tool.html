@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手动验证空投领取工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            font-family: monospace;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
+        .result.info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        
+        .result h3 {
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .result pre {
+            background: rgba(0,0,0,0.05);
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 空投领取验证工具</h1>
+        <p class="subtitle">手动验证用户的空投领取交易并补充能量值</p>
+        
+        <form id="verifyForm">
+            <div class="form-group">
+                <label for="address">用户地址</label>
+                <input 
+                    type="text" 
+                    id="address" 
+                    value="0x539b1201ce9b5f026309ae82e594d69472e8c271" 
+                    placeholder="0x..."
+                    required
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="txHash">交易哈希</label>
+                <input 
+                    type="text" 
+                    id="txHash" 
+                    value="0x936995f3ea34bd20a574bf5fbc2421810a6b4d762c0cbd6bf1a183ed1fb4bfc1" 
+                    placeholder="0x..."
+                    required
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="referrer">推荐人地址（可选）</label>
+                <input 
+                    type="text" 
+                    id="referrer" 
+                    value="0x0000000000000000000000000000000000000000" 
+                    placeholder="0x... 或留空"
+                >
+            </div>
+            
+            <button type="submit" id="submitBtn">
+                <span id="btnText">✅ 立即验证</span>
+                <span id="btnLoading" style="display: none;">
+                    验证中<span class="loading"></span>
+                </span>
+            </button>
+        </form>
+        
+        <div id="result" class="result"></div>
+    </div>
+    
+    <script>
+        const form = document.getElementById('verifyForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const btnText = document.getElementById('btnText');
+        const btnLoading = document.getElementById('btnLoading');
+        const resultDiv = document.getElementById('result');
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const address = document.getElementById('address').value.trim();
+            const txHash = document.getElementById('txHash').value.trim();
+            let referrer = document.getElementById('referrer').value.trim();
+            
+            if (!referrer || referrer === '0x' || referrer.length !== 42) {
+                referrer = '0x0000000000000000000000000000000000000000';
+            }
+            
+            // 显示加载状态
+            submitBtn.disabled = true;
+            btnText.style.display = 'none';
+            btnLoading.style.display = 'inline';
+            resultDiv.style.display = 'none';
+            
+            try {
+                const response = await fetch('https://rabbit-ai-backend-latest.onrender.com/api/mining/verify-claim', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        address: address,
+                        txHash: txHash,
+                        referrer: referrer
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.ok) {
+                    // 成功
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ 验证成功！</h3>
+                        <p><strong>交易哈希:</strong> ${data.txHash}</p>
+                        <p><strong>领取金额:</strong> ${data.amount} ${data.unit}</p>
+                        <p><strong>区块高度:</strong> ${data.blockNumber}</p>
+                        <p><strong>区块时间:</strong> ${data.blockTime || '未知'}</p>
+                        ${data.duplicated ? '<p><strong>提示:</strong> 该交易已经处理过（能量已发放）</p>' : '<p><strong>提示:</strong> 能量已成功发放！</p>'}
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else {
+                    // 失败
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `
+                        <h3>❌ 验证失败</h3>
+                        <p><strong>错误代码:</strong> ${data.code || 'UNKNOWN'}</p>
+                        <p><strong>错误信息:</strong> ${data.message || '未知错误'}</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                }
+            } catch (error) {
+                // 网络错误
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <h3>❌ 网络错误</h3>
+                    <p><strong>错误信息:</strong> ${error.message}</p>
+                    <p><strong>可能原因:</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>后端服务正在重启（稍等几分钟）</li>
+                        <li>网络连接问题</li>
+                        <li>CORS 跨域问题</li>
+                    </ul>
+                    <p style="margin-top: 10px;"><strong>建议:</strong> 等待 2-3 分钟后重试，或检查后端日志</p>
+                `;
+            } finally {
+                // 恢复按钮状态
+                submitBtn.disabled = false;
+                btnText.style.display = 'inline';
+                btnLoading.style.display = 'none';
+                resultDiv.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
+

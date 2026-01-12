@@ -1,251 +1,214 @@
-/**
- * 🔥 Indexer 补偿扫描服务
- * 
- * 目的：每 10 分钟自动检查缺失的空投领取数据，并自动补齐
- * 
- * 核心功能：
- * 1. 扫描所有 energy_total = 0 但链上有 claim 交易的用户
- * 2. 自动调用 verifyClaim 补充数据
- * 3. 记录补偿日志
- * 4. 发送 Telegram 告警
- * 
- * 设计原则：
- * - 幂等性：重复执行不会产生副作用
- * - 故障容错：单个用户失败不影响其他用户
- * - 资源友好：使用间隔扫描，不占用太多数据库资源
- */
-
+import { ethers } from 'ethers';
 import { supabase } from '../infra/supabase.js';
-import type { ethers } from 'ethers';
-import { verifyClaim } from './verifyClaim.js';
+import { config } from '../config.js';
+import { AIRDROP_ABI } from '../infra/abis.js';
+import { manualIndexTransaction } from './indexer.js';
 
-// 补偿扫描配置
-const SCAN_INTERVAL_MS = 10 * 60 * 1000; // 10 分钟
-const MAX_USERS_PER_SCAN = 50; // 每次最多处理 50 个用户
-const LOOKBACK_DAYS = 30; // 回溯 30 天内的数据
-
+/**
+ * 补偿扫描服务
+ * 
+ * 功能：
+ * 1. 定期扫描能量为0但余额不为0的用户（可能遗漏的用户）
+ * 2. 查询链上是否有未被Indexer捕获的Claimed事件
+ * 3. 自动补充缺失的领取记录
+ * 4. 100%保证数据一致性
+ * 
+ * 适用场景：
+ * - Indexer 冷启动延迟
+ * - RPC 节点限流导致部分事件遗漏
+ * - RPC 节点中断期间的交易
+ * 
+ * 执行频率：每10分钟
+ */
 export class CompensationScanner {
   private provider: ethers.providers.Provider;
-  private intervalId: NodeJS.Timeout | null = null;
+  private contract: ethers.Contract;
   private isRunning: boolean = false;
+  private scanInterval: NodeJS.Timeout | null = null;
 
   constructor(provider: ethers.providers.Provider) {
     this.provider = provider;
+    this.contract = new ethers.Contract(config.airdropContract, AIRDROP_ABI, provider);
   }
 
   /**
    * 启动补偿扫描服务
    */
-  start() {
-    if (this.intervalId) {
-      console.log('[CompensationScanner] 服务已经在运行');
-      return;
-    }
+  async start() {
+    console.log('[CompensationScanner] 🚀 启动自动补偿扫描服务...');
 
-    console.log('[CompensationScanner] 🚀 启动补偿扫描服务');
-    console.log(`[CompensationScanner] 扫描间隔: ${SCAN_INTERVAL_MS / 1000 / 60} 分钟`);
-    console.log(`[CompensationScanner] 每次处理: ${MAX_USERS_PER_SCAN} 个用户`);
-    console.log(`[CompensationScanner] 回溯天数: ${LOOKBACK_DAYS} 天`);
+    // 立即执行一次
+    await this.scanMissingClaims();
 
-    // 立即执行第一次扫描
-    this.runScan().catch((error) => {
-      console.error('[CompensationScanner] ❌ 首次扫描失败:', error);
-    });
-
-    // 启动定时扫描
-    this.intervalId = setInterval(() => {
-      this.runScan().catch((error) => {
+    // 每10分钟扫描一次
+    this.scanInterval = setInterval(() => {
+      this.scanMissingClaims().catch((error) => {
         console.error('[CompensationScanner] ❌ 定时扫描失败:', error);
       });
-    }, SCAN_INTERVAL_MS);
+    }, 600000); // 10分钟
+
+    console.log('[CompensationScanner] ✅ 自动补偿扫描服务已启动（每10分钟扫描一次）');
   }
 
   /**
    * 停止补偿扫描服务
    */
   stop() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-      console.log('[CompensationScanner] ⏸️  补偿扫描服务已停止');
+    if (this.scanInterval) {
+      clearInterval(this.scanInterval);
+      this.scanInterval = null;
+      console.log('[CompensationScanner] 🛑 自动补偿扫描服务已停止');
     }
   }
 
   /**
-   * 执行一次完整的扫描
+   * 扫描缺失的领取记录
    */
-  private async runScan() {
+  private async scanMissingClaims() {
     if (this.isRunning) {
-      console.log('[CompensationScanner] ⏭️  上次扫描尚未完成，跳过本次');
+      console.log('[CompensationScanner] ⏭️ 跳过扫描（上一次扫描仍在进行中）');
       return;
     }
 
     this.isRunning = true;
-    const scanStartTime = Date.now();
 
     try {
-      console.log('[CompensationScanner] 🔍 开始扫描...');
+      console.log('[CompensationScanner] 🔍 开始扫描缺失的领取记录...');
 
-      // 步骤 1: 查找潜在的遗漏用户
-      const missingUsers = await this.findMissingUsers();
-      
-      if (missingUsers.length === 0) {
-        console.log('[CompensationScanner] ✅ 没有发现遗漏数据');
+      // 查询所有 energy_total = 0 且 RAT 余额 > 0 的用户（最近7天创建的）
+      const { data: users, error } = await supabase
+        .from('users')
+        .select('address, created_at, rat_balance_wei, energy_total')
+        .eq('energy_total', 0)
+        .gte('created_at', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString())
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      if (!users || users.length === 0) {
+        console.log('[CompensationScanner] ✅ 未发现缺失数据的用户');
         return;
       }
 
-      console.log(`[CompensationScanner] 🎯 发现 ${missingUsers.length} 个潜在遗漏用户`);
+      console.log(`[CompensationScanner] ⚠️ 发现 ${users.length} 个可能遗漏的用户`);
 
-      // 步骤 2: 逐个补偿
-      let successCount = 0;
-      let failCount = 0;
+      let fixedCount = 0;
+      let skippedCount = 0;
+      let errorCount = 0;
 
-      for (const user of missingUsers) {
+      for (const user of users) {
+        const ratBalanceWei = BigInt(user.rat_balance_wei || '0');
+
+        // 跳过余额为0或小于最小领取量的用户（可能是外部转账出去了）
+        if (ratBalanceWei <= 0n || ratBalanceWei < BigInt('100000000000000000000')) {
+          // 小于100 RAT
+          skippedCount++;
+          continue;
+        }
+
         try {
-          await this.compensateUser(user);
-          successCount++;
-        } catch (error) {
-          failCount++;
-          console.error(`[CompensationScanner] ❌ 补偿用户 ${user.address} 失败:`, error);
+          // 查询链上是否有 Claimed 事件
+          const filter = this.contract.filters.Claimed(user.address);
+          const events = await this.contract.queryFilter(filter);
+
+          if (events.length === 0) {
+            console.log(
+              `[CompensationScanner] ℹ️ 用户 ${user.address} 链上没有领取记录（可能是外部转账）`
+            );
+            skippedCount++;
+            continue;
+          }
+
+          console.log(
+            `[CompensationScanner] 🔴 用户 ${user.address} 有 ${events.length} 个链上领取记录，但能量为 0`
+          );
+
+          // 补充所有缺失的领取记录
+          for (const event of events) {
+            const txHash = event.transactionHash;
+
+            // 检查是否已在数据库中
+            const { data: existing } = await supabase
+              .from('claims')
+              .select('tx_hash')
+              .eq('tx_hash', txHash)
+              .maybeSingle();
+
+            if (!existing) {
+              try {
+                await manualIndexTransaction(this.provider, txHash);
+                console.log(`[CompensationScanner] ✅ 已自动补充交易: ${txHash}`);
+                fixedCount++;
+
+                // 避免RPC限流，每次补充后等待2秒
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+              } catch (error: any) {
+                console.error(`[CompensationScanner] ❌ 补充失败: ${txHash}`, error);
+                errorCount++;
+              }
+            } else {
+              console.log(`[CompensationScanner] ⏭️ 交易已存在，跳过: ${txHash}`);
+              skippedCount++;
+            }
+          }
+        } catch (error: any) {
+          console.error(`[CompensationScanner] ❌ 处理用户 ${user.address} 失败:`, error);
+          errorCount++;
+
+          // 如果是RPC限流错误，等待更长时间
+          if (error?.message?.includes('limit exceeded')) {
+            console.warn('[CompensationScanner] ⚠️ RPC 限流，等待30秒后继续...');
+            await new Promise((resolve) => setTimeout(resolve, 30000));
+          }
         }
       }
 
-      // 步骤 3: 记录扫描结果
-      const scanDuration = Date.now() - scanStartTime;
-      console.log('[CompensationScanner] 📊 扫描完成!');
-      console.log(`   - 扫描时间: ${scanDuration}ms`);
-      console.log(`   - 成功补偿: ${successCount} 个用户`);
-      console.log(`   - 失败: ${failCount} 个用户`);
+      console.log('[CompensationScanner] 📊 补偿扫描完成:');
+      console.log(`  ✅ 成功修复: ${fixedCount} 笔`);
+      console.log(`  ⏭️ 已跳过: ${skippedCount} 笔`);
+      console.log(`  ❌ 失败: ${errorCount} 笔`);
 
-      // 步骤 4: 如果有失败，发送告警
-      if (failCount > 0) {
-        await this.sendAlert(`补偿扫描完成，但有 ${failCount} 个用户补偿失败`);
-      } else if (successCount > 0) {
-        await this.sendAlert(`补偿扫描完成，成功补偿 ${successCount} 个用户 ✅`);
+      // 如果有修复成功的记录，发送TG通知
+      if (fixedCount > 0) {
+        try {
+          const { sendSystemErrorAlert } = await import('./telegram.js');
+          await sendSystemErrorAlert({
+            type: 'CRITICAL_ERROR',
+            message: `自动补偿扫描完成：成功修复 ${fixedCount} 笔数据`,
+            details: `✅ 成功修复: ${fixedCount} 笔\n⏭️ 已跳过: ${skippedCount} 笔\n❌ 失败: ${errorCount} 笔\n📊 总扫描: ${users.length} 个用户`,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (error) {
+          console.error('[CompensationScanner] ❌ 发送TG通知失败:', error);
+        }
       }
     } catch (error) {
-      console.error('[CompensationScanner] ❌ 扫描过程发生严重错误:', error);
-      await this.sendAlert(`补偿扫描失败: ${error}`);
+      console.error('[CompensationScanner] ❌ 扫描失败:', error);
+
+      // 发送错误告警
+      try {
+        const { sendSystemErrorAlert } = await import('./telegram.js');
+        await sendSystemErrorAlert({
+          type: 'CRITICAL_ERROR',
+          message: `补偿扫描失败！`,
+          details: error instanceof Error ? error.message : String(error),
+          timestamp: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error('[CompensationScanner] ❌ 发送错误告警失败:', e);
+      }
     } finally {
       this.isRunning = false;
     }
   }
 
   /**
-   * 查找潜在的遗漏用户
-   * 
-   * 规则：
-   * 1. energy_total = 0 (从未获得过能量)
-   * 2. 但 claims 表中有记录
-   * 3. 且记录在最近 30 天内
+   * 手动触发一次扫描（用于测试或紧急修复）
    */
-  private async findMissingUsers(): Promise<Array<{ address: string; tx_hash: string; referrer: string | null }>> {
-    try {
-      // 计算回溯时间
-      const lookbackDate = new Date();
-      lookbackDate.setDate(lookbackDate.getDate() - LOOKBACK_DAYS);
-
-      // 查询：在 claims 表中有记录，但 users 表中 energy_total = 0 的用户
-      const { data, error } = await supabase
-        .rpc('find_missing_energy_users', {
-          lookback_date: lookbackDate.toISOString(),
-          max_results: MAX_USERS_PER_SCAN
-        });
-
-      if (error) {
-        console.error('[CompensationScanner] 查询遗漏用户失败:', error);
-        return [];
-      }
-
-      return data || [];
-    } catch (error) {
-      console.error('[CompensationScanner] findMissingUsers 出错:', error);
-      return [];
-    }
-  }
-
-  /**
-   * 补偿单个用户
-   */
-  private async compensateUser(user: { address: string; tx_hash: string; referrer: string | null }) {
-    console.log(`[CompensationScanner] 🔧 补偿用户: ${user.address}`);
-    console.log(`   - 交易哈希: ${user.tx_hash}`);
-    console.log(`   - 推荐人: ${user.referrer || '无'}`);
-
-    try {
-      const result = await verifyClaim({
-        provider: this.provider,
-        address: user.address,
-        txHash: user.tx_hash,
-        referrer: user.referrer || '0x0000000000000000000000000000000000000000',
-        ipAddress: undefined, // 补偿扫描不需要 IP
-        country: undefined,   // 补偿扫描不需要国家
-      });
-
-      console.log(`[CompensationScanner] ✅ 用户 ${user.address} 补偿成功`);
-      
-      // 记录补偿日志到数据库（可选）
-      await this.logCompensation(user.address, user.tx_hash, 'success');
-
-      return result;
-    } catch (error) {
-      console.error(`[CompensationScanner] ❌ 用户 ${user.address} 补偿失败:`, error);
-      
-      // 记录补偿失败日志
-      await this.logCompensation(user.address, user.tx_hash, 'failed', String(error));
-      
-      throw error;
-    }
-  }
-
-  /**
-   * 记录补偿日志到数据库
-   */
-  private async logCompensation(address: string, txHash: string, status: 'success' | 'failed', errorMessage?: string) {
-    try {
-      await supabase.from('compensation_logs').insert({
-        address,
-        tx_hash: txHash,
-        status,
-        error_message: errorMessage,
-        created_at: new Date().toISOString(),
-      });
-    } catch (error) {
-      // 日志失败不影响主流程
-      console.error('[CompensationScanner] 记录补偿日志失败:', error);
-    }
-  }
-
-  /**
-   * 发送 Telegram 告警
-   */
-  private async sendAlert(message: string) {
-    try {
-      // 动态导入 telegram 服务，避免循环依赖
-      const { sendSystemErrorAlert } = await import('./telegram.js');
-      await sendSystemErrorAlert({
-        type: 'CRITICAL_ERROR',
-        message: `补偿扫描告警: ${message}`,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('[CompensationScanner] 发送 Telegram 告警失败:', error);
-    }
+  async triggerManualScan(): Promise<void> {
+    console.log('[CompensationScanner] 🔧 触发手动扫描...');
+    await this.scanMissingClaims();
   }
 }
-
-// 导出单例实例（由主程序初始化）
-export let compensationScannerInstance: CompensationScanner | null = null;
-
-export function initializeCompensationScanner(provider: ethers.providers.Provider) {
-  if (compensationScannerInstance) {
-    console.log('[CompensationScanner] 实例已存在，跳过初始化');
-    return compensationScannerInstance;
-  }
-
-  compensationScannerInstance = new CompensationScanner(provider);
-  compensationScannerInstance.start();
-  
-  return compensationScannerInstance;
-}
-

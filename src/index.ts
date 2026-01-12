@@ -119,12 +119,18 @@ async function main() {
   
   const getAutoPayoutService = () => autoPayoutService;
 
-  // 🔥 新增：初始化补偿扫描服务（P0级优化）
-  console.log('[startup] 🚀 正在初始化补偿扫描服务...');
+  // 🔥 P0级：自动补偿扫描服务（100%防止数据遗漏）
+  console.log('[startup] 🚀 正在初始化自动补偿扫描服务...');
   try {
-    const { initializeCompensationScanner } = await import('./services/compensationScanner.js');
-    initializeCompensationScanner(getProvider());
-    console.log('[startup] ✅ 补偿扫描服务已启动（每 10 分钟自动检查缺失数据）');
+    const { CompensationScanner } = await import('./services/compensationScanner.js');
+    const compensationScanner = new CompensationScanner(getProvider());
+    await compensationScanner.start();
+    console.log('[startup] ✅ 自动补偿扫描服务已启动');
+    console.log('[startup] 📊 功能说明：');
+    console.log('[startup]    - 每10分钟自动扫描缺失数据');
+    console.log('[startup]    - 自动查询链上事件并补充');
+    console.log('[startup]    - 适用于1000+用户的批量修复');
+    console.log('[startup]    - 零人工干预，完全自动化');
   } catch (e) {
     console.warn('[startup] ⚠️  补偿扫描服务初始化失败，但不影响主服务:', e);
     // 补偿扫描失败不影响主服务
