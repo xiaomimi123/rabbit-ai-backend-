@@ -178,14 +178,29 @@ export class CompensationScanner {
 
             if (!existing) {
               try {
-                await manualIndexTransaction(this.provider, txHash);
-                console.log(`[CompensationScanner] ✅ 已自动补充交易: ${txHash}`);
-                fixedCount++;
-
+                const result = await manualIndexTransaction(this.provider, txHash);
+                
+                // ✅ 修复：详细记录 RPC 调用结果
+                console.log(`[CompensationScanner] 📊 RPC调用结果:`, {
+                  txHash,
+                  success: result.success,
+                  message: result.message,
+                  user: user.address
+                });
+                
+                // ✅ 修复：检查 result.success
+                if (result.success) {
+                  console.log(`[CompensationScanner] ✅ 已自动补充交易: ${txHash}`);
+                  fixedCount++;
+                } else {
+                  console.error(`[CompensationScanner] ❌ 补充失败: ${txHash}`, result.message);
+                  errorCount++;
+                }
+                
                 // 避免RPC限流，每次补充后等待2秒
                 await new Promise((resolve) => setTimeout(resolve, 2000));
               } catch (error: any) {
-                console.error(`[CompensationScanner] ❌ 补充失败: ${txHash}`, error);
+                console.error(`[CompensationScanner] ❌ 补充异常: ${txHash}`, error);
                 errorCount++;
               }
             } else {

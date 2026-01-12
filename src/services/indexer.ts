@@ -170,19 +170,39 @@ export async function manualIndexTransaction(
               p_referrer: referrer || '0x0000000000000000000000000000000000000000',
               p_amount_wei: amountWei,
               p_block_number: receipt.blockNumber,
-              p_block_time: blockTimeIso || new Date().toISOString()
+              p_block_time: blockTimeIso || new Date().toISOString(),
+              // ✅ 修复：明确传递可选参数
+              p_fee_amount_wei: null,
+              p_self_reward: 1,
+              p_referrer_first: 3,
+              p_referrer_repeat: 1
             });
             
             if (rpcError) {
               console.error(`[manualIndex] RPC 调用失败:`, rpcError);
               results.push({ type: 'Claimed', status: 'error', error: rpcError.message });
             } else {
-              if (rpcResult?.status === 'skipped') {
+              // ✅ 修复：检查函数返回的 status
+              if (rpcResult?.status === 'error') {
+                // ❌ 函数内部执行失败
+                console.error(`[manualIndex] RPC 函数执行失败:`, rpcResult.message || '未知错误');
+                results.push({ 
+                  type: 'Claimed', 
+                  status: 'error', 
+                  error: rpcResult.message || '未知错误',
+                  txHash,
+                  user
+                });
+              } else if (rpcResult?.status === 'skipped') {
                 console.log(`[manualIndex] 交易已存在，跳过处理: ${txHash}`);
                 results.push({ type: 'Claimed', status: 'skipped', txHash, user, amount: ethers.utils.formatEther(amountWei) });
-              } else {
+              } else if (rpcResult?.status === 'success') {
                 console.log(`[manualIndex] ✅ 成功处理交易: ${txHash}, is_first_claim: ${rpcResult?.is_first_claim}`);
                 results.push({ type: 'Claimed', status: 'inserted', txHash, user, amount: ethers.utils.formatEther(amountWei) });
+              } else {
+                // ⚠️ 未知状态
+                console.warn(`[manualIndex] ⚠️ 未知的 RPC 返回状态:`, rpcResult);
+                results.push({ type: 'Claimed', status: 'unknown', rpcResult, txHash, user });
               }
             }
           }
