@@ -79,6 +79,19 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
   if (pendErr) throw pendErr;
   const pendingTotal = (pend || []).reduce((acc: number, r: any) => acc + Number(r.amount || 0), 0);
 
+  // 🟢 新增：查询过去24小时的空投领取次数
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count: claims24h, error: claimsErr } = await supabase
+    .from('claims')
+    .select('tx_hash', { count: 'exact', head: true })
+    .gte('created_at', twentyFourHoursAgo);
+  
+  if (claimsErr) {
+    console.error('[getAdminKpis] Failed to count 24h claims:', claimsErr);
+  }
+  const finalClaims24h = claims24h ?? 0;
+  console.log(`[getAdminKpis] 24小时领取次数: ${finalClaims24h}`);
+
   // 🟢 修复：RPC 调用添加超时和错误处理，避免网络错误导致整个 API 失败
   let claimFee = 0.001; // 默认值（如果 RPC 失败）
   let cooldownSec = 14400; // 默认 4 小时
@@ -246,6 +259,7 @@ export async function getAdminKpis(provider: ethers.providers.Provider) {
   const result = {
     ok: true,
     usersTotal: Number(finalUsersCount),
+    claims24h: finalClaims24h, // 🟢 新增：24小时领取次数
     pendingWithdrawTotal: String(pendingTotal),
     pendingWithdrawUnit: 'USDT',
     airdropFeeRecipient: feeRecipient || '',
