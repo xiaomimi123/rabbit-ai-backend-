@@ -126,10 +126,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
   });
 
   // 🟢 新增：GET /api/admin/claims/daily-stats - 获取每日领取次数统计
-  app.get('/api/admin/claims/daily-stats', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/admin/claims/daily-stats', async (req: FastifyRequest<{ Querystring: { days?: string } }>, reply: FastifyReply) => {
     if (!assertAdmin(req, reply)) return;
     try {
-      const days = Number(req.query?.days || 7); // 默认最近7天
+      const days = Number(req.query.days || 7); // 默认最近7天
       return await getDailyClaimsStats(days);
     } catch (e) {
       const err = toErrorResponse(e);
@@ -138,10 +138,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: {
   });
 
   // 🟢 新增：GET /api/admin/users/daily-growth - 获取每日用户增长统计
-  app.get('/api/admin/users/daily-growth', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/admin/users/daily-growth', async (req: FastifyRequest<{ Querystring: { days?: string } }>, reply: FastifyReply) => {
     if (!assertAdmin(req, reply)) return;
     try {
-      const days = Number(req.query?.days || 7); // 默认最近7天
+      const days = Number(req.query.days || 7); // 默认最近7天
       return await getDailyUserGrowthStats(days);
     } catch (e) {
       const err = toErrorResponse(e);
