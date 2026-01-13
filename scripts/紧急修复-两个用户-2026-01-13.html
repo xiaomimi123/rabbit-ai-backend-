@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🚨 紧急修复 - 2个用户能量缺失问题</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 1000px;
+      margin: 50px auto;
+      padding: 30px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    h1 {
+      color: #d32f2f;
+      border-bottom: 4px solid #d32f2f;
+      padding-bottom: 15px;
+      font-size: 28px;
+    }
+    .alert {
+      background: #fff3cd;
+      border-left: 6px solid #ff9800;
+      padding: 20px;
+      margin: 25px 0;
+      border-radius: 6px;
+    }
+    .user-card {
+      background: #f5f5f5;
+      border-left: 5px solid #2196F3;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 6px;
+    }
+    .user-card h3 {
+      color: #2196F3;
+      margin-top: 0;
+    }
+    .input-group {
+      margin: 20px 0;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 8px;
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      font-size: 15px;
+      box-sizing: border-box;
+    }
+    input:focus {
+      border-color: #2196F3;
+      outline: none;
+    }
+    .btn-fix {
+      background: linear-gradient(135deg, #d32f2f 0%, #c62828 100%);
+      color: white;
+      border: none;
+      padding: 18px 40px;
+      font-size: 18px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 25px;
+      transition: all 0.3s;
+    }
+    .btn-fix:hover {
+      background: linear-gradient(135deg, #c62828 0%, #b71c1c 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 5px 20px rgba(211,47,47,0.4);
+    }
+    .btn-fix:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .log {
+      background: #263238;
+      color: #00e676;
+      padding: 20px;
+      border-radius: 6px;
+      margin-top: 25px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      max-height: 400px;
+      overflow-y: auto;
+      line-height: 1.6;
+    }
+    .log-entry {
+      margin: 5px 0;
+      padding: 5px;
+      border-left: 3px solid transparent;
+    }
+    .log-entry.success {
+      color: #00e676;
+      border-left-color: #00e676;
+    }
+    .log-entry.error {
+      color: #ff5252;
+      border-left-color: #ff5252;
+    }
+    .log-entry.info {
+      color: #64b5f6;
+      border-left-color: #64b5f6;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      margin: 20px 0;
+    }
+    .stat-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .stat-card h4 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      opacity: 0.9;
+    }
+    .stat-card .value {
+      font-size: 32px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚨 紧急修复 - 2个用户能量缺失问题</h1>
+    
+    <div class="alert">
+      <strong>⚠️ 问题描述：</strong><br>
+      补偿扫描器显示"成功修复3笔数据"，但实际数据库中用户能量仍为0。<br><br>
+      
+      <strong>🔍 根本原因：</strong><br>
+      Render服务器运行的是旧版代码（有bug），新修复的代码已推送到Git但未部署。<br><br>
+      
+      <strong>✅ 解决方案：</strong><br>
+      1. 立即手动修复这2个用户（本工具）<br>
+      2. 部署新代码到Render（永久解决）
+    </div>
+
+    <div class="user-card">
+      <h3>👤 受影响用户</h3>
+      <p><strong>用户1:</strong> 0xe8c903de963a446c661071251762d328420ccd19 (712 RAT)</p>
+      <p><strong>交易1:</strong> 0x1b38954d8c02c16702bf9d4cf513e95bd4e4d4ad872614fdd53c0f473a9c6c37</p>
+      <hr style="margin: 15px 0; border: 1px solid #ddd;">
+      <p><strong>用户2:</strong> 0xf0dfddd1d74138280916d86702f3c1c66171045b (273 RAT)</p>
+      <p><strong>交易2:</strong> 0xc2a961b00b39d8b779f23286617f699d2d4a7fa87f9d5b5e2a0f9c4d77b4cab0</p>
+    </div>
+
+    <div class="input-group">
+      <label for="apiUrl">🌐 后端 API 地址</label>
+      <input 
+        type="text" 
+        id="apiUrl" 
+        value="https://rabbit-ai-backend-latest.onrender.com"
+        placeholder="例如: https://rabbit-ai-backend.onrender.com"
+      >
+      <small style="color: #666; display: block; margin-top: 8px;">
+        💡 请确认后端域名正确，否则修复会失败
+      </small>
+    </div>
+
+    <button class="btn-fix" onclick="startFix()">
+      🚀 开始修复两个用户（预计30秒）
+    </button>
+
+    <div class="stats" id="stats" style="display: none;">
+      <div class="stat-card">
+        <h4>✅ 成功</h4>
+        <div class="value" id="successCount">0</div>
+      </div>
+      <div class="stat-card">
+        <h4>❌ 失败</h4>
+        <div class="value" id="errorCount">0</div>
+      </div>
+      <div class="stat-card">
+        <h4>⏱️ 进度</h4>
+        <div class="value" id="progress">0/2</div>
+      </div>
+    </div>
+
+    <div id="logContainer"></div>
+  </div>
+
+  <script>
+    const transactions = [
+      {
+        user: '0xe8c903de963a446c661071251762d328420ccd19',
+        txHash: '0x1b38954d8c02c16702bf9d4cf513e95bd4e4d4ad872614fdd53c0f473a9c6c37',
+        balance: '712 RAT'
+      },
+      {
+        user: '0xf0dfddd1d74138280916d86702f3c1c66171045b',
+        txHash: '0xc2a961b00b39d8b779f23286617f699d2d4a7fa87f9d5b5e2a0f9c4d77b4cab0',
+        balance: '273 RAT'
+      }
+    ];
+
+    let successCount = 0;
+    let errorCount = 0;
+    let currentIndex = 0;
+
+    function log(message, type = 'info') {
+      const logContainer = document.getElementById('logContainer');
+      if (!logContainer.querySelector('.log')) {
+        logContainer.innerHTML = '<div class="log"></div>';
+      }
+      
+      const logDiv = logContainer.querySelector('.log');
+      const timestamp = new Date().toLocaleTimeString('zh-CN');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${timestamp}] ${message}`;
+      logDiv.appendChild(entry);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function updateStats() {
+      document.getElementById('stats').style.display = 'grid';
+      document.getElementById('successCount').textContent = successCount;
+      document.getElementById('errorCount').textContent = errorCount;
+      document.getElementById('progress').textContent = `${currentIndex}/${transactions.length}`;
+    }
+
+    async function fixTransaction(tx) {
+      const apiUrl = document.getElementById('apiUrl').value.trim();
+      const endpoint = `${apiUrl}/api/admin/indexer/manual-index`;
+
+      log(`🔄 正在处理用户: ${tx.user}`, 'info');
+      log(`💰 余额: ${tx.balance}`, 'info');
+      log(`📝 交易哈希: ${tx.txHash}`, 'info');
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ txHash: tx.txHash }),
+        });
+
+        log(`📊 HTTP状态码: ${response.status}`, response.ok ? 'success' : 'error');
+
+        const result = await response.json();
+        log(`📦 响应数据: ${JSON.stringify(result)}`, 'info');
+
+        if (response.ok && result.success) {
+          successCount++;
+          log(`✅ 用户 ${tx.user} 修复成功！`, 'success');
+          
+          // 显示详细信息
+          if (result.details) {
+            log(`   - 状态: ${result.details.status}`, 'success');
+            log(`   - 首次领取: ${result.details.is_first_claim ? '是' : '否'}`, 'success');
+            log(`   - 能量已更新: 是`, 'success');
+          }
+        } else {
+          errorCount++;
+          log(`❌ 用户 ${tx.user} 修复失败！`, 'error');
+          log(`   - 原因: ${result.message || result.error || '未知错误'}`, 'error');
+          
+          if (result.details) {
+            log(`   - 详细信息: ${JSON.stringify(result.details)}`, 'error');
+          }
+        }
+      } catch (error) {
+        errorCount++;
+        log(`❌ 网络请求失败: ${error.message}`, 'error');
+        log(`   提示: 请检查后端API地址是否正确`, 'error');
+      }
+
+      currentIndex++;
+      updateStats();
+    }
+
+    async function startFix() {
+      const apiUrl = document.getElementById('apiUrl').value.trim();
+      
+      if (!apiUrl) {
+        alert('❌ 请填写后端 API 地址！');
+        return;
+      }
+
+      const btn = document.querySelector('.btn-fix');
+      btn.disabled = true;
+      btn.textContent = '⏳ 修复中...请稍候';
+
+      successCount = 0;
+      errorCount = 0;
+      currentIndex = 0;
+
+      log('🚀 开始修复流程...', 'info');
+      log(`🌐 后端地址: ${apiUrl}`, 'info');
+      log(`📊 待修复用户数: ${transactions.length}`, 'info');
+      log('━'.repeat(60), 'info');
+
+      for (const tx of transactions) {
+        await fixTransaction(tx);
+        
+        // 每个请求之间等待2秒，避免过载
+        if (currentIndex < transactions.length) {
+          log('⏳ 等待 2 秒后继续...', 'info');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
+      log('━'.repeat(60), 'info');
+      log(`✅ 修复流程完成！`, 'success');
+      log(`📊 最终统计:`, 'info');
+      log(`   - 成功: ${successCount} 个用户`, successCount > 0 ? 'success' : 'info');
+      log(`   - 失败: ${errorCount} 个用户`, errorCount > 0 ? 'error' : 'info');
+      
+      if (successCount === transactions.length) {
+        log('🎉 所有用户修复成功！', 'success');
+        log('', 'info');
+        log('📌 下一步:', 'info');
+        log('   1. 前往 Supabase 验证用户能量是否更新', 'info');
+        log('   2. 部署新代码到 Render 防止未来再出现此问题', 'info');
+      } else if (errorCount > 0) {
+        log('⚠️ 部分修复失败，请检查错误日志', 'error');
+        log('', 'info');
+        log('💡 常见失败原因:', 'info');
+        log('   1. 后端 API 地址错误', 'info');
+        log('   2. 后端服务未运行或正在重启', 'info');
+        log('   3. RPC 节点故障或限流', 'info');
+        log('   4. 交易哈希不存在或已处理', 'info');
+      }
+
+      btn.disabled = false;
+      btn.textContent = '🔄 重新修复';
+    }
+  </script>
+</body>
+</html>
+

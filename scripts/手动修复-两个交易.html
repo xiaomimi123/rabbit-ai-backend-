@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>手动修复两个交易</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 900px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      border-bottom: 3px solid #f44336;
+      padding-bottom: 10px;
+    }
+    .warning-box {
+      background: #fff3cd;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 4px;
+    }
+    .tx-section {
+      margin: 20px 0;
+      padding: 15px;
+      background: #f9f9f9;
+      border-left: 4px solid #2196F3;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 10px 5px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    button:disabled {
+      background: #cccccc;
+      cursor: not-allowed;
+    }
+    .log {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-top: 20px;
+    }
+    .log-entry {
+      margin: 5px 0;
+    }
+    .success { color: #4CAF50; }
+    .error { color: #f44336; }
+    .warning { color: #ff9800; }
+    .info { color: #2196F3; }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    label {
+      font-weight: bold;
+      color: #555;
+    }
+    code {
+      background: #f4f4f4;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚨 紧急修复 - 两个交易</h1>
+    
+    <div class="warning-box">
+      <strong>⚠️ 使用前必读：</strong>
+      <ol>
+        <li>请先在下方输入框中填写您的后端域名</li>
+        <li>点击"🚀 一键修复两个交易"按钮</li>
+        <li>等待修复完成，查看日志输出</li>
+        <li>修复完成后，去 Supabase Dashboard 验证结果</li>
+      </ol>
+    </div>
+
+    <div>
+      <label>后端 API 地址：</label>
+      <input type="text" id="apiUrl" value="https://rabbit-ai-backend.onrender.com" placeholder="例如: https://rabbit-ai-backend.onrender.com">
+      <p style="color: #666; font-size: 14px;">💡 提示：如果不确定，请查看 Render Dashboard 中的后端服务 URL</p>
+    </div>
+
+    <div class="tx-section">
+      <h3>交易 1</h3>
+      <p><strong>交易哈希：</strong> <code>0xc2a961b00b39d8b779f23286617f699d2d4a7fa87f9d5b5e2a0f9c4d77b4cab0</code></p>
+      <p><strong>用户地址：</strong> 0xf0df...045b</p>
+      <button onclick="fixTransaction('0xc2a961b00b39d8b779f23286617f699d2d4a7fa87f9d5b5e2a0f9c4d77b4cab0')">🔧 仅修复此交易</button>
+    </div>
+
+    <div class="tx-section">
+      <h3>交易 2</h3>
+      <p><strong>交易哈希：</strong> <code>0x1b38954d8c02c16702bf9d4cf513e95bd4e4d4ad872614fdd53c0f473a9c6c37</code></p>
+      <p><strong>用户地址：</strong> 0xe8c9...cd19</p>
+      <button onclick="fixTransaction('0x1b38954d8c02c16702bf9d4cf513e95bd4e4d4ad872614fdd53c0f473a9c6c37')">🔧 仅修复此交易</button>
+    </div>
+
+    <button onclick="fixAllTransactions()" style="background: #f44336; font-size: 18px;">🚀 一键修复两个交易</button>
+
+    <div class="log" id="logOutput">
+      <div class="log-entry info">等待操作...</div>
+    </div>
+  </div>
+
+  <script>
+    function log(message, type = 'info') {
+      const logOutput = document.getElementById('logOutput');
+      const timestamp = new Date().toLocaleTimeString('zh-CN');
+      const className = type;
+      logOutput.innerHTML += `<div class="log-entry ${className}">[${timestamp}] ${message}</div>`;
+      logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('logOutput').innerHTML = '<div class="log-entry info">开始修复...</div>';
+    }
+
+    async function fixTransaction(txHash) {
+      const apiUrl = document.getElementById('apiUrl').value.trim();
+      if (!apiUrl || apiUrl.includes('你的后端域名')) {
+        alert('❌ 请先填写正确的后端 API 地址！\n\n例如: https://rabbit-ai-backend.onrender.com');
+        return;
+      }
+
+      log(`开始处理交易: ${txHash.substring(0, 10)}...`, 'info');
+
+      try {
+        const response = await fetch(`${apiUrl}/api/admin/indexer/manual-index`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ txHash })
+        });
+
+        const responseText = await response.text();
+        log(`HTTP 状态码: ${response.status}`, response.ok ? 'success' : 'warning');
+
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (e) {
+          throw new Error(`API 返回非 JSON 格式: ${responseText.substring(0, 200)}`);
+        }
+
+        log(`API 返回: ${JSON.stringify(result, null, 2)}`, 'info');
+
+        if (result.success) {
+          log(`✅ 交易 ${txHash.substring(0, 10)}... 修复成功！`, 'success');
+          if (result.message) {
+            log(`详情: ${result.message}`, 'info');
+          }
+        } else {
+          log(`❌ 交易 ${txHash.substring(0, 10)}... 修复失败`, 'error');
+          if (result.message) {
+            log(`错误信息: ${result.message}`, 'error');
+          }
+        }
+      } catch (error) {
+        log(`❌ 处理失败: ${error.message}`, 'error');
+        log(`可能的原因:`, 'warning');
+        log(`  1. 后端 API 地址不正确`, 'warning');
+        log(`  2. 后端服务未运行`, 'warning');
+        log(`  3. RPC 节点连接失败`, 'warning');
+        log(`  4. 数据库 RPC 函数内部错误`, 'warning');
+      }
+    }
+
+    async function fixAllTransactions() {
+      clearLog();
+      log('🚀 开始批量修复两个交易...', 'info');
+      log('', 'info');
+
+      // 修复第一个交易
+      await fixTransaction('0xc2a961b00b39d8b779f23286617f699d2d4a7fa87f9d5b5e2a0f9c4d77b4cab0');
+      
+      log('', 'info');
+      log('⏳ 等待 2 秒后继续...', 'warning');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      log('', 'info');
+
+      // 修复第二个交易
+      await fixTransaction('0x1b38954d8c02c16702bf9d4cf513e95bd4e4d4ad872614fdd53c0f473a9c6c37');
+
+      log('', 'info');
+      log('✅ 所有交易处理完成！', 'success');
+      log('📊 请前往 Supabase Dashboard 验证结果', 'info');
+    }
+  </script>
+</body>
+</html>
+

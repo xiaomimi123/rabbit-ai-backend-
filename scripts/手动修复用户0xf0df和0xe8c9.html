@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>手动修复用户数据</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      border-bottom: 3px solid #4CAF50;
+      padding-bottom: 10px;
+    }
+    .user-section {
+      margin: 20px 0;
+      padding: 15px;
+      background: #f9f9f9;
+      border-left: 4px solid #2196F3;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 10px 5px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    button:disabled {
+      background: #cccccc;
+      cursor: not-allowed;
+    }
+    .log {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-top: 20px;
+    }
+    .log-entry {
+      margin: 5px 0;
+    }
+    .success { color: #4CAF50; }
+    .error { color: #f44336; }
+    .warning { color: #ff9800; }
+    .info { color: #2196F3; }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    label {
+      font-weight: bold;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔧 手动修复用户数据工具</h1>
+    
+    <p><strong>功能说明：</strong>此工具会手动触发后端 API 来补充这2个用户的领取记录。</p>
+
+    <div>
+      <label>后端 API 地址：</label>
+      <input type="text" id="apiUrl" value="https://你的后端域名.onrender.com" placeholder="例如: https://rabbit-ai-backend.onrender.com">
+    </div>
+
+    <div class="user-section">
+      <h3>用户 1: 0xf0df...045b</h3>
+      <p><strong>RAT 余额：</strong> 273 RAT</p>
+      <p><strong>当前能量：</strong> 0</p>
+      <button onclick="fixUser('0xf0dfddd1d74138280916d86702f3c1c66171045b')">🔧 修复此用户</button>
+    </div>
+
+    <div class="user-section">
+      <h3>用户 2: 0xe8c9...cd19</h3>
+      <p><strong>RAT 余额：</strong> 712 RAT</p>
+      <p><strong>当前能量：</strong> 0</p>
+      <button onclick="fixUser('0xe8c903de963a446c661071251762d328420ccd19')">🔧 修复此用户</button>
+    </div>
+
+    <button onclick="fixAllUsers()" style="background: #2196F3;">🚀 一键修复所有用户</button>
+
+    <div class="log" id="logOutput">
+      <div class="log-entry info">等待操作...</div>
+    </div>
+  </div>
+
+  <script>
+    function log(message, type = 'info') {
+      const logOutput = document.getElementById('logOutput');
+      const timestamp = new Date().toLocaleTimeString('zh-CN');
+      const className = type;
+      logOutput.innerHTML += `<div class="log-entry ${className}">[${timestamp}] ${message}</div>`;
+      logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('logOutput').innerHTML = '<div class="log-entry info">开始修复...</div>';
+    }
+
+    async function fixUser(address) {
+      const apiUrl = document.getElementById('apiUrl').value.trim();
+      if (!apiUrl || apiUrl === 'https://你的后端域名.onrender.com') {
+        alert('请先填写正确的后端 API 地址！');
+        return;
+      }
+
+      clearLog();
+      log(`开始修复用户: ${address}`, 'info');
+
+      try {
+        // Step 1: 查询链上交易（需要通过后端 API）
+        log(`正在查询链上交易记录...`, 'info');
+
+        // 调用后端的手动索引 API
+        // 注意：这个 API 需要管理员权限，您可能需要添加认证
+        const response = await fetch(`${apiUrl}/api/admin/compensation/scan-user`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            // 如果需要认证，在这里添加 Authorization header
+          },
+          body: JSON.stringify({ address })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`API 调用失败 (${response.status}): ${errorText}`);
+        }
+
+        const result = await response.json();
+        log(`API 返回结果: ${JSON.stringify(result, null, 2)}`, 'success');
+
+        if (result.success) {
+          log(`✅ 用户 ${address} 修复成功！`, 'success');
+          log(`修复详情: ${result.message}`, 'info');
+        } else {
+          log(`❌ 用户 ${address} 修复失败: ${result.message}`, 'error');
+        }
+      } catch (error) {
+        log(`❌ 修复失败: ${error.message}`, 'error');
+        log(`提示: 请检查后端 API 地址是否正确，以及是否需要认证`, 'warning');
+      }
+    }
+
+    async function fixAllUsers() {
+      await fixUser('0xf0dfddd1d74138280916d86702f3c1c66171045b');
+      await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒
+      await fixUser('0xe8c903de963a446c661071251762d328420ccd19');
+    }
+  </script>
+</body>
+</html>
+
