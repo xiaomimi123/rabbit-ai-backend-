@@ -213,6 +213,22 @@ export async function getReferralHistory(address: string) {
     }
   });
 
+  // 🟢 新增：查询最近7天的能量审计日志（推荐人获得的能量）
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const { data: energyLogsData } = await supabase
+    .from('energy_audit_log')
+    .select('tx_hash,energy_delta')
+    .eq('user_address', addr)
+    .gte('created_at', sevenDaysAgo);
+
+  // 创建能量审计日志映射：tx_hash -> energy_delta
+  const energyLogMap = new Map<string, number>();
+  (energyLogsData || []).forEach((log: any) => {
+    if (log.tx_hash && typeof log.energy_delta === 'number') {
+      energyLogMap.set(log.tx_hash.toLowerCase(), log.energy_delta);
+    }
+  });
+
   // ✅ 修改：返回所有 claims 记录，计算每次的能量奖励
   const result: any[] = [];
   (claimsData || []).forEach((row: any) => {
@@ -224,8 +240,18 @@ export async function getReferralHistory(address: string) {
     const firstClaimTime = firstClaimMap.get(invitedAddr);
     const isFirstClaim = firstClaimTime === createdAt;
     
-    // ✅ 计算能量奖励：第一次领取 = 2（邀请）+ 1（管道）= 3，之后每次 = 1（管道）
-    const energyReward = isFirstClaim ? 3 : 1;
+    // 判断是否是最近7天的交易
+    const isRecentClaim = new Date(createdAt) > new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    
+    // 🟢 优化：优先从审计日志读取真实能量值（仅对最近7天的交易）
+    let energyReward: number;
+    if (isRecentClaim && energyLogMap.has(txHash)) {
+      // 从审计日志读取真实值
+      energyReward = energyLogMap.get(txHash)!;
+    } else {
+      // 使用硬编码兜底值：第一次领取 = 3，之后每次 = 1
+      energyReward = isFirstClaim ? 3 : 1;
+    }
     
     // 从 rewardMap 获取奖励金额，如果没有则从 claims 的 amount_wei 计算 10%
     let rewardWei = rewardMap.get(txHash);
