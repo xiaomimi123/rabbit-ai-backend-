@@ -101,11 +101,12 @@ async function main() {
   // 🟢 为后台管理创建专用的 RPC Provider（如果配置了 ADMIN_RPC_URL）
   let adminProvider: ethers.providers.Provider | null = null;
   if (config.adminRpcUrl) {
-    // 🟢 为 Admin RPC 也配置超时
+    // 🔒 关键修复：显式指定 BSC 主网网络，避免自动检测失败
+    const { BSC_MAINNET } = await import('./infra/rpcPool.js');
     adminProvider = new ethers.providers.JsonRpcProvider({
       url: config.adminRpcUrl,
       timeout: 30000, // 30 秒超时
-    });
+    }, BSC_MAINNET); // 显式指定 BSC 主网（Chain ID: 56）
     console.log(`[startup] ✅ Admin RPC provider initialized: ${config.adminRpcUrl}`);
   } else {
     console.log('[startup] ℹ️  Admin RPC URL not configured, using default RPC pool for admin operations');

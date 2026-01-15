@@ -10,11 +10,25 @@ interface RpcNode {
 }
 
 /**
+ * BSC 主网网络配置
+ * Chain ID: 56
+ * 
+ * 🔒 关键修复：显式指定网络配置，避免 JsonRpcProvider 自动检测网络失败
+ * 错误信息：could not detect network (event="noNetwork", code=NETWORK_ERROR)
+ */
+export const BSC_MAINNET: ethers.providers.Network = {
+  chainId: 56,
+  name: 'bsc',
+  ensAddress: undefined,
+};
+
+/**
  * 🟢 增强的 RPC 连接池
  * - 健康检查：定期检查 RPC 节点可用性
  * - 智能轮换：优先使用健康的 RPC
  * - 错误统计：记录每个 RPC 的失败次数
  * - 超时配置：30 秒超时（比默认 120 秒快）
+ * - 🔒 显式指定网络：避免 "could not detect network" 错误
  */
 export class RpcPool {
   private nodes: RpcNode[] = [];
@@ -30,11 +44,12 @@ export class RpcPool {
     }
 
     // 🟢 创建 RPC 节点，配置 30 秒超时（比默认 120 秒快）
+    // 🔒 关键修复：显式指定 BSC 主网网络，避免自动检测失败导致的 "could not detect network" 错误
     this.nodes = urls.map((url) => {
       const provider = new ethers.providers.JsonRpcProvider({
         url,
         timeout: 30000, // 30 秒超时
-      });
+      }, BSC_MAINNET); // 显式指定 BSC 主网（Chain ID: 56）
       return {
         provider,
         url,
